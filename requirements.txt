@@ -1,0 +1,98 @@
+# VritraAI - Comprehensive Requirements File
+# Generated from comprehensive project analysis
+# Python 3.7+ required (Python 3.8+ recommended)
+
+# ============================================================================
+# CORE DEPENDENCIES (Required - Application will exit if missing)
+# ============================================================================
+
+# OpenAI API client - Required for AI functionality (OpenRouter API support)
+# Used for OpenRouter API calls and AI chat completions
+# NOTE: Code currently uses v0.x API (openai.ChatCompletion.create)
+# Compatible with both v0.x and v1.x (v1.x has backward compatibility layer)
+# For v0.x API: use openai<1.0.0
+# For v1.x API: use openai>=1.0.0 (may require code updates)
+openai>=0.28.0
+
+# HTTP library for API requests
+# Used for Gemini API calls, OpenRouter API, and general HTTP requests
+requests>=2.28.0
+
+# Advanced terminal UI library - Required for interactive shell
+# Provides command history, autocomplete, key bindings, and terminal UI
+prompt-toolkit>=3.0.0
+
+# ============================================================================
+# RECOMMENDED DEPENDENCIES (Highly Recommended - Better UX)
+# ============================================================================
+
+# Rich text and beautiful formatting in terminal
+# Used for colored output, tables, panels, syntax highlighting, and UI elements
+# Application works without it but with degraded formatting
+rich>=13.0.0
+
+# ============================================================================
+# OPTIONAL DEPENDENCIES (Enhanced Features - Gracefully handled if missing)
+# ============================================================================
+
+# Syntax highlighting for code display
+# Used for enhanced code readability in file viewing and editing
+# Conditionally imported - application works without it
+pygments>=2.13.0
+
+# System and process utilities
+# Used for detailed system information, memory stats, and process monitoring
+# Conditionally imported - application works without it
+psutil>=5.9.0
+
+# ============================================================================
+# OPTIONAL CODE FORMATTING TOOLS (For format_file command)
+# ============================================================================
+
+# Black - Python code formatter (recommended)
+# Used by format_file command for Python code formatting
+# Checked at runtime - not required for core functionality
+black>=23.0.0
+
+# autopep8 - Python code formatter (alternative to black)
+# Used as fallback formatter if black is not available
+# Checked at runtime - not required for core functionality
+autopep8>=2.0.0
+
+# ============================================================================
+# NOTES:
+# ============================================================================
+# CORE DEPENDENCIES:
+#   - openai: Required for OpenRouter API integration
+#   - requests: Required for Gemini API (direct HTTP) and general HTTP requests
+#   - prompt-toolkit: Required for interactive terminal interface
+#
+# RECOMMENDED:
+#   - rich: Highly recommended for beautiful terminal output (works without it)
+#
+# OPTIONAL:
+#   - pygments: Enhances code display with syntax highlighting
+#   - psutil: Provides detailed system information and monitoring
+#   - black: Python code formatter (used by format_file command)
+#   - autopep8: Alternative Python code formatter (fallback for black)
+#
+# API INTEGRATIONS:
+#   - Gemini API: Uses direct HTTP requests via 'requests' library (no SDK needed)
+#   - OpenRouter API: Uses 'openai' library with custom base URL
+#
+# INSTALLATION:
+#   Install all dependencies:
+#     pip install -r requirements.txt
+#
+#   Install only core dependencies:
+#     pip install openai requests prompt-toolkit rich
+#
+#   Install with optional features:
+#     pip install -r requirements.txt
+#     pip install pygments psutil
+#
+# VERSION COMPATIBILITY:
+#   - All version constraints use >= to allow for security updates
+#   - Tested with Python 3.7+ (Python 3.8+ recommended for best experience)
+#   - Minimum versions chosen for security and feature compatibility
+
