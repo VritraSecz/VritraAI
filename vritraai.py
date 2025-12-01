@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import subprocess
 import shutil
@@ -80,7 +82,43 @@ except ImportError:
 
 # --- Configuration ---
 # Central version info (change here to update everywhere)
-VRITRA_VERSION = "v0.29.1"
+VRITRA_VERSION = "v0.29.5"
+
+def sync_config_version(config_dict: dict) -> dict:
+    """Sync the _config_version field in config dictionary with VRITRA_VERSION."""
+    if config_dict is None:
+        return config_dict
+    config_dict["_config_version"] = VRITRA_VERSION
+    return config_dict
+
+# Sync version in config after loading (moved after VRITRA_VERSION definition)
+try:
+    if current_config and current_config.get("_config_version") != VRITRA_VERSION:
+        sync_config_version(current_config)
+        if config_manager:
+            try:
+                config_manager.save_config(current_config)
+            except Exception:
+                pass
+        elif 'save_config' in globals():
+            try:
+                save_config(current_config)
+            except Exception:
+                pass
+except Exception:
+    pass  # Silently fail if sync not possible
+
+# What's New data for current version (hardcoded - only main highlights)
+WHATS_NEW_HIGHLIGHTS = [
+    "Fixed interactive commands (vim, nano, python, etc.) - they now work properly without getting stuck",
+    "Improved error recovery - system commands now show helpful recovery options with multiple fix suggestions",
+    "Better AI error analysis - AI now focuses on your actual errors, not shell internals",
+    "Enhanced history command - now shows commands with timestamps, supports head/tail piping, and prevents duplicates",
+    "Improved path detection - automatically expands ~ and environment variables for better file/directory access",
+    "Enhanced AI context - all AI requests now include full system info, directory structure, and project details",
+    "Improved OS info detection - robust error handling for Termux/Android environments with fallback methods",
+    "Better command validation - detects and rejects invalid flags/arguments before launching interactive shell"
+]
 
 # Professional config directory structure
 CONFIG_DIR = os.path.expanduser("~/.config-vritrasecz/vritraai")
@@ -90,13 +128,8 @@ HISTORY_FILE = os.path.join(CONFIG_DIR, "history")
 SESSION_LOG_FILE = os.path.join(CONFIG_DIR, "session.log")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 LEARNING_FILE = os.path.join(CONFIG_DIR, "learning.md")
-SCRIPTS_DIR = os.path.join(CONFIG_DIR, "scripts")
-PLUGINS_DIR = os.path.join(CONFIG_DIR, "plugins")
 LASTCMD_LOG_FILE = os.path.join(CONFIG_DIR, "lastcmd.log")
-
-# Create subdirectories
-for subdir in [SCRIPTS_DIR, PLUGINS_DIR]:
-    os.makedirs(subdir, exist_ok=True)
+VERSION_INFO_FILE = os.path.join(CONFIG_DIR, "vritraai-version.json")
 
 # Determine AI availability based on API base
 def get_ai_enabled():
@@ -324,8 +357,6 @@ ALIASES = {
     'gc': 'git commit'
 }
 
-# Plugin system (now uses professional config directory)
-# PLUGIN_DIR already defined above as PLUGINS_DIR
 THEMES = {
     "dark": {
         "prompt_user": "#50fa7b bold",
@@ -1504,8 +1535,14 @@ class SessionContext:
             'apikey', 'api_base', 'project_type', 'dependencies_check',
             'missing_files', 'tree', 'find_files', 'sys_info', 'disk_usage',
             'env', 'path', 'which', 'uptime', 'memory', 'processes', 'time',
-            'calc', 'hash', 'encode', 'decode', 'note', 'script', 'save_output',
-            'feedback',
+            'calc', 'hash', 'encode', 'decode', 'feedback', 'session', 'history',
+            'create_file', 'create_dir', 'mkdir', 'read_file', 'edit_file',
+            'search_file', 'compare', 'diff', 'diff_dir', 'diff_semantic',
+            'search_regex', 'search_semantic', 'recent', 'doc', 'summarize',
+            'explain', 'generate', 'template', 'validate', 'format', 'project',
+            'review', 'explain_last', 'security_scan', 'optimize_code', 'refactor',
+            'project_health', 'project_optimize', 'network', 'learn', 'optimize',
+            'analyze_system', 'cheat', 'model', 'ai', 'cat', 'grep', 'safe_mode',
         }
         
         # Count command types
@@ -1728,7 +1765,7 @@ def show_session_summary(exit_reason: str = "Normal exit"):
                 sys_pct = summary['system_commands']/total_commands*100
                 builtin_pct = summary['builtin_commands']/total_commands*100
                 
-                console.print(f"  🤖 AI Commands: [bold bright_white]{summary['ai_commands']}[/bold bright_white] [dim]({ai_pct:.1f}%)[/dim]")
+                console.print(f"  🤖 VritraAI Commands: [bold bright_white]{summary['ai_commands']}[/bold bright_white] [dim]({ai_pct:.1f}%)[/dim]")
                 console.print(f"  ⚙️ System Commands: [bold bright_white]{summary['system_commands']}[/bold bright_white] [dim]({sys_pct:.1f}%)[/dim]")
                 console.print(f"  🛠️ Built-in Commands: [bold bright_white]{summary['builtin_commands']}[/bold bright_white] [dim]({builtin_pct:.1f}%)[/dim]")
                 console.print()
@@ -1742,8 +1779,8 @@ def show_session_summary(exit_reason: str = "Normal exit"):
             
             # AI Information (if applicable) - no border
             if summary['ai_commands'] > 0 or AI_ENABLED:
-                console.print("🤖 AI Information", style="bold bright_green")
-                console.print(f"  🧠 AI Interactions: [bright_green]{summary['ai_commands']}[/bright_green]")
+                console.print("🤖 VritraAI Information", style="bold bright_green")
+                console.print(f"  🧠 VritraAI Interactions: [bright_green]{summary['ai_commands']}[/bright_green]")
                 console.print(f"  🤖 Current Model: [bright_cyan]{MODEL if AI_ENABLED else 'Disabled'}[/bright_cyan]")
                 if AI_ENABLED:
                     console.print("  🔑 API Status: [bold green]✅ Active[/bold green]")
@@ -1798,7 +1835,7 @@ def show_session_summary(exit_reason: str = "Normal exit"):
             
             if total_commands > 0:
                 print_with_rich("\n📊 COMMAND BREAKDOWN", "info")
-                print_with_rich(f"  🤖 AI Commands: {summary['ai_commands']} ({summary['ai_commands']/total_commands*100:.1f}%)", "default")
+                print_with_rich(f"  🤖 VritraAI Commands: {summary['ai_commands']} ({summary['ai_commands']/total_commands*100:.1f}%)", "default")
                 print_with_rich(f"  ⚙️ System Commands: {summary['system_commands']} ({summary['system_commands']/total_commands*100:.1f}%)", "default")
                 print_with_rich(f"  🛠️ Built-in Commands: {summary['builtin_commands']} ({summary['builtin_commands']/total_commands*100:.1f}%)", "default")
             
@@ -1808,8 +1845,8 @@ def show_session_summary(exit_reason: str = "Normal exit"):
             print_with_rich(f"  🎭 Prompt Style: {config_state.prompt_style}", "default")
             
             if summary['ai_commands'] > 0 or AI_ENABLED:
-                print_with_rich("\n🤖 AI INFORMATION", "info")
-                print_with_rich(f"  🧠 AI Interactions: {summary['ai_commands']}", "default")
+                print_with_rich("\n🤖 VritraAI INFORMATION", "info")
+                print_with_rich(f"  🧠 VritraAI Interactions: {summary['ai_commands']}", "default")
                 print_with_rich(f"  🤖 Current Model: {MODEL if AI_ENABLED else 'Disabled'}", "default")
                 print_with_rich(f"  🔑 API Status: {'✅ Active' if AI_ENABLED else '❌ Not configured'}", "default")
             
@@ -1884,9 +1921,44 @@ def log_last_command(command: str, output: str, exit_code: int):
         pass  # Silent fail for logging
 
 def is_interactive_command(command: str) -> bool:
-    """Check if a command is interactive and can't have its output captured."""
-    interactive_indicators = ['vim', 'nano', 'vi', 'emacs', 'htop', 'top', 'less', 'more', 'ssh', 'scp', 'rsync', 'man']
-    return any(indicator in command.lower() for indicator in interactive_indicators)
+    """Check if a command is interactive and can't have its output captured.
+    
+    Uses multiple heuristics to detect interactive commands:
+    1. Known interactive command names
+    2. Commands that typically need TTY (checking for common patterns)
+    3. Commands with flags that indicate interactivity
+    """
+    command_lower = command.lower()
+    
+    # Known interactive command names
+    interactive_indicators = [
+        'vim', 'nano', 'vi', 'emacs', 'htop', 'top', 'less', 'more', 
+        'ssh', 'scp', 'rsync', 'man', 'watch', 'ncurses', 'dialog',
+        'whiptail', 'fzf', 'ranger', 'mc', 'tmux', 'screen', 'weechat',
+        'irssi', 'mutt', 'alpine', 'lynx', 'links', 'w3m', 'git commit',
+        'git rebase', 'git merge', 'git add -i', 'python', 'python3',
+        'ipython', 'node', 'nodejs', 'ruby', 'irb', 'perl', 'mysql',
+        'psql', 'sqlite3', 'redis-cli', 'mongo', 'mongosh', 'docker exec -it',
+        'docker run -it', 'kubectl exec -it', 'kubectl run -it'
+    ]
+    
+    # Check for interactive flags
+    interactive_flags = ['-i', '--interactive', '-it', '-ti']
+    has_interactive_flag = any(flag in command_lower for flag in interactive_flags)
+    
+    # Check for known interactive patterns
+    has_interactive_pattern = any(indicator in command_lower for indicator in interactive_indicators)
+    
+    # Commands that read from stdin without flags are likely interactive
+    # (but this is a weaker signal, so we use it as a fallback)
+    stdin_readers = ['cat', 'grep', 'sed', 'awk', 'sort', 'uniq']
+    is_stdin_reader = any(reader in command_lower.split()[0] for reader in stdin_readers if command_lower.split())
+    
+    # If it has pipes or redirects, it's less likely to be interactive
+    has_pipes = '|' in command or '>' in command or '<' in command or '>>' in command
+    
+    # Return True if it matches interactive patterns and doesn't have pipes/redirects
+    return (has_interactive_flag or has_interactive_pattern) and not has_pipes
 
 def is_ai_command(cmd: str) -> bool:
     """Check if a command is an AI/internal VritraAI command that should not be logged."""
@@ -2102,14 +2174,130 @@ def is_complex_command(command: str) -> bool:
     return False
 
 def get_os_info() -> Dict[str, str]:
-    """Get operating system information."""
-    return {
-        'system': platform.system(),
-        'release': platform.release(),
-        'version': platform.version(),
-        'machine': platform.machine(),
-        'processor': platform.processor()
-    }
+    """Get operating system information with robust error handling.
+    
+    Handles cases where platform functions may fail or return empty values,
+    especially in Termux/Android environments. Always returns a complete dict
+    with fallback values.
+    """
+    os_info = {}
+    
+    # Detect Termux/Android environment
+    env = os.environ
+    is_termux = "TERMUX_VERSION" in env or (env.get("PREFIX", "").startswith("/data/data/com.termux"))
+    is_android = bool(env.get("ANDROID_ROOT") or env.get("ANDROID_DATA"))
+    
+    # Get system name with fallback
+    try:
+        system = platform.system()
+        if not system or system.strip() == "":
+            if is_termux or is_android:
+                system = "Android"
+            else:
+                system = "Unknown"
+    except Exception:
+        system = "Unknown"
+    
+    os_info['system'] = system
+    
+    # Get release version with fallback
+    try:
+        release = platform.release()
+        if not release or release.strip() == "":
+            # Try to get Android version from build.prop or fallback
+            if is_termux or is_android:
+                try:
+                    # Try to read Android version from system properties
+                    import subprocess
+                    result = subprocess.run(['getprop', 'ro.build.version.release'], 
+                                          capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0 and result.stdout.strip():
+                        release = result.stdout.strip()
+                    else:
+                        release = "Unknown"
+                except Exception:
+                    release = "Unknown"
+            else:
+                release = "Unknown"
+    except Exception:
+        release = "Unknown"
+    
+    os_info['release'] = release
+    
+    # Get version string with fallback
+    try:
+        version = platform.version()
+        if not version or version.strip() == "":
+            version = "Unknown"
+    except Exception:
+        version = "Unknown"
+    
+    os_info['version'] = version
+    
+    # Get machine architecture with fallback
+    try:
+        machine = platform.machine()
+        if not machine or machine.strip() == "":
+            # Try alternative methods for Termux/Android
+            if is_termux or is_android:
+                try:
+                    import subprocess
+                    result = subprocess.run(['uname', '-m'], 
+                                          capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0 and result.stdout.strip():
+                        machine = result.stdout.strip()
+                    else:
+                        machine = "Unknown"
+                except Exception:
+                    machine = "Unknown"
+            else:
+                machine = "Unknown"
+    except Exception:
+        machine = "Unknown"
+    
+    os_info['machine'] = machine
+    
+    # Get processor info with fallback (this often fails in Termux)
+    try:
+        processor = platform.processor()
+        if not processor or processor.strip() == "":
+            # Try alternative methods
+            if is_termux or is_android:
+                try:
+                    import subprocess
+                    # Try to get CPU info from /proc/cpuinfo
+                    result = subprocess.run(['uname', '-p'], 
+                                          capture_output=True, text=True, timeout=2)
+                    if result.returncode == 0 and result.stdout.strip():
+                        processor = result.stdout.strip()
+                    else:
+                        # Try reading from /proc/cpuinfo
+                        try:
+                            with open('/proc/cpuinfo', 'r') as f:
+                                for line in f:
+                                    if 'model name' in line.lower() or 'Processor' in line:
+                                        processor = line.split(':')[-1].strip()
+                                        break
+                            if not processor or processor.strip() == "":
+                                processor = "Unknown"
+                        except Exception:
+                            processor = "Unknown"
+                except Exception:
+                    processor = "Unknown"
+            else:
+                processor = "Unknown"
+    except Exception:
+        processor = "Unknown"
+    
+    os_info['processor'] = processor
+    
+    # Add Termux/Android detection info
+    if is_termux:
+        os_info['environment'] = 'Termux'
+    elif is_android:
+        os_info['environment'] = 'Android'
+    
+    return os_info
 
 def detect_project_type() -> Optional[str]:
     """Detect the type of project in current directory."""
@@ -2581,18 +2769,6 @@ def display_enhanced_error(error: Exception, context: str = "", show_full_traceb
     if context:
         print_with_rich(f"📍 Context: {context}", "warning")
     
-    
-    # Show full traceback if requested or provided (with colors)
-    if show_full_traceback or traceback_str:
-        print_with_rich("\n📋 Full Traceback:", "info")
-        if traceback_str:
-            colored_tb = format_traceback_colorful(traceback_str)
-            print_with_rich(colored_tb, "default")
-        else:
-            import traceback
-            colored_tb = format_traceback_colorful(traceback.format_exc())
-            print_with_rich(colored_tb, "default")
-    
     # Get error knowledge from database
     error_info = ERROR_KNOWLEDGE_BASE.get(error_type)
     
@@ -2669,6 +2845,26 @@ def build_code_frame_from_exc(exc_info) -> Dict[str, Any]:
         return None
 
 
+def expand_path(path: str) -> str:
+    """Expand shell path variables like ~ and $VAR to actual paths.
+    
+    Args:
+        path: Path string that may contain ~ or environment variables
+        
+    Returns:
+        Expanded path string
+    """
+    if not path:
+        return path
+    try:
+        # Expand ~ to home directory
+        expanded = os.path.expanduser(path)
+        # Expand environment variables like $HOME, ${VAR}
+        expanded = os.path.expandvars(expanded)
+        return expanded
+    except Exception:
+        return path
+
 def sanitize_path(path: str) -> str:
     """Sanitize a path for privacy when paranoid_mode is enabled."""
     try:
@@ -2717,6 +2913,64 @@ SMART_CTX_DEFAULTS = {
     'max_snippets': 5,
     'snippet_chars': 2000
 }
+
+def sanitize_traceback_for_ai(traceback_str: str) -> str:
+    """Remove vritraai.py references from traceback to avoid confusing AI.
+    
+    The AI should focus on the user's actual error, not the shell wrapper code.
+    This function filters out lines containing vritraai.py file paths while preserving
+    the traceback structure, exception type, and the actual user error message.
+    """
+    if not traceback_str:
+        return traceback_str
+    
+    lines = traceback_str.split('\n')
+    sanitized_lines = []
+    skip_next_code_line = False
+    
+    for i, line in enumerate(lines):
+        line_stripped = line.strip()
+        line_lower = line.lower()
+        
+        # Check if this line is a file path line referencing vritraai.py
+        # Pattern: File "/path/to/vritraai.py", line X
+        is_vritraai_file_line = (
+            ('file "' in line_lower or "file '" in line_lower) and 
+            'vritraai.py' in line_lower
+        )
+        
+        if is_vritraai_file_line:
+            # Skip this file path line and the next code line
+            skip_next_code_line = True
+            continue
+        
+        # If we're skipping the next code line (which is internal shell code)
+        if skip_next_code_line:
+            # Skip code lines that are clearly from vritraai.py internal code
+            # But keep exception messages and important error info
+            if (line_stripped.startswith('os.') or 
+                line_stripped.startswith('subprocess.') or
+                line_stripped.startswith('current_process') or
+                line_stripped.startswith('result.') or
+                line_stripped.startswith('execute_command') or
+                line_stripped.startswith('handle_error') or
+                (line_stripped and not line_stripped[0].isalpha() and '=' in line_stripped and 'vritraai' in line_lower)):
+                skip_next_code_line = False
+                continue
+            # If it's an exception line or important info, keep it
+            skip_next_code_line = False
+        
+        # Always keep exception type lines and error messages
+        # These don't contain file paths and are important for AI
+        sanitized_lines.append(line)
+    
+    # Join back and clean up any double newlines
+    sanitized = '\n'.join(sanitized_lines)
+    # Remove excessive blank lines (more than 2 consecutive)
+    while '\n\n\n' in sanitized:
+        sanitized = sanitized.replace('\n\n\n', '\n\n')
+    
+    return sanitized.strip()
 
 
 def _depth_limited_walk(root: str, max_depth: int):
@@ -2804,43 +3058,122 @@ def _get_file_snippet(path: str, tokens: set, max_chars: int) -> str:
         return ""
 
 
-def build_smart_error_context(cwd: str, error: Exception, context_str: str, traceback_str: str, paranoid: bool, limits: Dict[str, int] = None) -> str:
-    """Build a minimal context for AI: just immediate file/folder names with tags.
-    No recursion, no snippets. Keeps prompt small and practical.
-    """
+def build_comprehensive_context(cwd: str = None, include_files: bool = True, limits: Dict[str, int] = None) -> str:
+    """Build comprehensive context for AI including system info, directory structure, and project details."""
+    if cwd is None:
+        cwd = os.getcwd()
+    
     limits = limits or SMART_CTX_DEFAULTS
-    # Build header
     lines = []
-    disp_cwd = sanitize_path(cwd) if paranoid else cwd
-    lines.append(f"CWD: {disp_cwd}")
-    lines.append(f"Error: {type(error).__name__}: {str(error)}")
-    # include raw traceback minimally (no ANSI)
-    if traceback_str:
-        tb_short = '\n'.join(traceback_str.strip().splitlines()[-12:])
-        lines.append("Traceback (tail):\n" + tb_short)
-    # List immediate entries only
+    
+    # System Information
+    os_info = get_os_info()
+    lines.append("=== SYSTEM INFORMATION ===")
+    lines.append(f"OS: {os_info['system']} {os_info['release']}")
+    lines.append(f"Version: {os_info['version']}")
+    lines.append(f"Architecture: {os_info['machine']}")
+    if os_info['processor']:
+        lines.append(f"Processor: {os_info['processor']}")
+    
+    # Python version
     try:
-        entries = sorted(os.listdir(cwd))
-    except Exception:
-        entries = []
-    # Tag entries and filter known-noise dirs/files minimally
-    lines.append("Entries (current directory):")
-    count = 0
-    for name in entries:
-        if name in SMART_CTX_IGNORED_DIRS:
-            continue
-        path = os.path.join(cwd, name)
-        tag = '[dir]' if os.path.isdir(path) else '[file]'
-        display_name = name + ('/' if os.path.isdir(path) else '')
-        lines.append(f"  • {tag} {display_name}")
-        count += 1
-        if limits and count >= limits.get('max_entries', 50):
-            break
-    # Always mention common manifests if present (even if filtered above)
-    for mf in ['requirements.txt', 'pyproject.toml', 'package.json', 'setup.cfg', 'Dockerfile']:
-        p = os.path.join(cwd, mf)
-        if os.path.exists(p) and mf not in entries:
-            lines.append(f"  • [file] {mf}")
+        import sys
+        lines.append(f"Python: {sys.version.split()[0]} ({sys.executable})")
+    except:
+        pass
+    
+    # Shell information
+    try:
+        shell = os.environ.get('SHELL', os.environ.get('COMSPEC', 'Unknown'))
+        lines.append(f"Shell: {shell}")
+    except:
+        pass
+    
+    # Current Working Directory
+    lines.append(f"\n=== CURRENT DIRECTORY ===")
+    lines.append(f"Path: {cwd}")
+    
+    # Project Type
+    project_type = detect_project_type()
+    if project_type:
+        lines.append(f"Project Type: {project_type}")
+    
+    # Directory Structure
+    if include_files:
+        lines.append(f"\n=== DIRECTORY STRUCTURE ===")
+        try:
+            entries = sorted(os.listdir(cwd))
+            dirs = []
+            files = []
+            
+            for name in entries:
+                if name in SMART_CTX_IGNORED_DIRS:
+                    continue
+                path = os.path.join(cwd, name)
+                if os.path.isdir(path):
+                    dirs.append(name)
+                else:
+                    files.append(name)
+            
+            # List directories
+            if dirs:
+                lines.append("Directories:")
+                for d in dirs[:limits.get('max_entries', 50)]:
+                    lines.append(f"  📁 {d}/")
+            
+            # List files
+            if files:
+                lines.append("Files:")
+                for f in files[:limits.get('max_entries', 50)]:
+                    # Get file size for context
+                    try:
+                        size = os.path.getsize(os.path.join(cwd, f))
+                        size_str = f" ({size} bytes)" if size < 1024 else f" ({size/1024:.1f} KB)"
+                    except:
+                        size_str = ""
+                    lines.append(f"  📄 {f}{size_str}")
+            
+            # Always mention important manifest files
+            important_files = ['requirements.txt', 'pyproject.toml', 'package.json', 'setup.cfg', 'Dockerfile', 
+                             'Cargo.toml', 'go.mod', 'pom.xml', 'Makefile', 'CMakeLists.txt', '.gitignore']
+            manifest_info = []
+            for mf in important_files:
+                p = os.path.join(cwd, mf)
+                if os.path.exists(p):
+                    manifest_info.append(mf)
+            
+            if manifest_info:
+                lines.append(f"\nImportant Files Found: {', '.join(manifest_info)}")
+                
+        except Exception as e:
+            lines.append(f"Could not list directory: {e}")
+    
+    return '\n'.join(lines)
+
+def build_smart_error_context(cwd: str, error: Exception, context_str: str, traceback_str: str, paranoid: bool, limits: Dict[str, int] = None) -> str:
+    """Build comprehensive context for AI error recovery including system info, directory structure, and error details."""
+    limits = limits or SMART_CTX_DEFAULTS
+    lines = []
+    
+    # Build comprehensive system and directory context
+    comprehensive_ctx = build_comprehensive_context(cwd, include_files=True, limits=limits)
+    lines.append(comprehensive_ctx)
+    
+    # Error Information
+    lines.append(f"\n=== ERROR INFORMATION ===")
+    disp_cwd = sanitize_path(cwd) if paranoid else cwd
+    lines.append(f"Context: {context_str}" if context_str else f"Location: {disp_cwd}")
+    lines.append(f"Error Type: {type(error).__name__}")
+    lines.append(f"Error Message: {str(error)}")
+    
+    # Include sanitized traceback (tail only)
+    if traceback_str:
+        sanitized_tb = sanitize_traceback_for_ai(traceback_str)
+        if sanitized_tb:
+            tb_short = '\n'.join(sanitized_tb.strip().splitlines()[-12:])
+            lines.append(f"\n=== TRACEBACK (last 12 lines) ===")
+            lines.append(tb_short)
+    
     return '\n'.join(lines)
 def execute_with_error_recovery(operation_func, *args, context: str = "", max_retries: int = 3, **kwargs):
     """Execute an operation with automatic error recovery and retry logic.
@@ -2928,12 +3261,19 @@ def handle_error_with_recovery(error: Exception, context: str = "", show_suggest
                     dir_context = f"Files in current directory: {', '.join(files_in_dir)}"
                 except Exception:
                     dir_context = "Could not list current directory"
-                smart_ctx = build_smart_error_context(cwd, error, context, traceback_str, getattr(config_state, 'paranoid_mode', False))
+                # Sanitize traceback to remove vritraai.py references before passing to AI
+                sanitized_tb = sanitize_traceback_for_ai(traceback_str) if traceback_str else traceback_str
+                smart_ctx = build_smart_error_context(cwd, error, context, sanitized_tb, getattr(config_state, 'paranoid_mode', False))
                 prompt = f"""The user encountered an error and needs help fixing it.
 
 {smart_ctx}
 
-Please explain what likely went wrong and provide specific, actionable fix steps. Suggest concrete commands when appropriate. Plain text only."""
+Please provide:
+1. A clear explanation of what went wrong
+2. Multiple possible fix commands (at least 3-5 different approaches)
+3. Step-by-step instructions for each fix option
+
+Format fix commands clearly so they can be easily extracted. Provide various approaches (e.g., create missing files/directories, check permissions, verify paths, alternative solutions). Plain text only."""
                 explanation = get_ai_response(prompt)
                 if explanation:
                     cleaned = clean_ai_response(explanation)
@@ -2975,19 +3315,25 @@ Please explain what likely went wrong and provide specific, actionable fix steps
                 except Exception:
                     dir_context = "Could not list current directory"
             
-            smart_ctx = build_smart_error_context(cwd, error, context, traceback_str, getattr(config_state, 'paranoid_mode', False))
+                # Sanitize traceback to remove vritraai.py references before passing to AI
+                sanitized_tb = sanitize_traceback_for_ai(traceback_str) if traceback_str else traceback_str
+                smart_ctx = build_smart_error_context(cwd, error, context, sanitized_tb, getattr(config_state, 'paranoid_mode', False))
             prompt = f"""The user encountered an error and needs help fixing it.
 
 {smart_ctx}
 
-Please explain:
-1) What likely went wrong
+Please provide:
+1) A clear explanation of what went wrong
+2) Multiple possible fix commands (at least 3-5 different approaches)
+3) Step-by-step instructions for each fix option
+
+Format fix commands clearly so they can be easily extracted. Provide various approaches (e.g., create missing files/directories, check permissions, verify paths, alternative solutions).
 2) How to fix it with specific steps
 3) Concrete commands to run (if applicable)
 
 Plain text only."""
         
-        print_with_rich("\n💡 AI Explanation:", "info")
+        print_with_rich("\n💡 VritraAI Explanation:", "info")
         explanation = get_ai_response(prompt)
         if explanation:
             cleaned = clean_ai_response(explanation)
@@ -3009,18 +3355,19 @@ Plain text only."""
         choice = input(f"\nChoose recovery option (1-{max_options}): ").strip()
         
         if choice == "1" and AI_ENABLED and show_suggestion:
-            # Show full traceback first (use captured if available)
-            print_with_rich("\n📋 Full Traceback:", "info")
-            if traceback_str:
-                print_with_rich(format_traceback_colorful(traceback_str), "default")
-            else:
-                import traceback
-                print_with_rich(format_traceback_colorful(traceback.format_exc()), "default")
+            # Show error type and message instead of full traceback
+            error_type = type(error).__name__
+            error_msg = str(error)
+            print_with_rich(f"\n❌ Error: {error_type}: {error_msg}", "error")
             
-            # Get AI suggestion for the error with traceback
+            # Get AI suggestion for the error with traceback (still sanitized for AI)
             error_type = type(error).__name__
             error_msg = str(error)
             tb_for_prompt = traceback_str or "(no traceback captured)"
+            
+            # Sanitize traceback to remove vritraai.py references before passing to AI
+            if tb_for_prompt != "(no traceback captured)":
+                tb_for_prompt = sanitize_traceback_for_ai(tb_for_prompt)
             
             # Build smart context (filtered) before asking AI
             smart_ctx = build_smart_error_context(os.getcwd(), error, context, tb_for_prompt, getattr(config_state, 'paranoid_mode', False))
@@ -3028,13 +3375,18 @@ Plain text only."""
 
 {smart_ctx}
 
-Provide a clear solution or workaround with specific commands."""
+Please provide:
+1. A clear explanation of what went wrong
+2. Multiple possible fix commands (at least 3-5 different approaches)
+3. Step-by-step instructions for each fix option
+
+Format fix commands clearly so they can be easily extracted. Provide various approaches (e.g., create missing files/directories, check permissions, verify paths, alternative solutions)."""
             
-            print_with_rich("\n🤖 Asking AI for help...", "info")
+            print_with_rich("\n🤖 Asking VritraAI for help...", "info")
             suggestion = get_ai_response(suggestion_prompt)
             if suggestion:
                 cleaned_suggestion = clean_ai_response(suggestion)
-                print_with_rich(f"\n🤖 AI Suggestion:", "info")
+                print_with_rich(f"\n🤖 VritraAI Suggestion:", "info")
                 # Unified renderer for colorful, fence-free output
                 print_ai_response(cleaned_suggestion, use_typewriter=True)
                 
@@ -3407,14 +3759,14 @@ def print_ai_response(text: str, use_typewriter: bool = True):
     
     if has_code_blocks:
         # Use special handler for responses with code blocks
-        print_with_rich("🤖 AI:", "info")
+        print_with_rich("🤖 VritraAI:", "info")
         print_ai_response_with_code_blocks(text)
     else:
         # Format the response for terminal output
         formatted_text = format_ai_response_for_terminal(text)
         
         if use_typewriter and len(formatted_text) > 20:
-            print_with_rich("🤖 AI:", "info")
+            print_with_rich("🤖 VritraAI:", "info")
             
             # Use fast mode for very long responses (>800 characters)
             fast_mode = len(formatted_text) > 800
@@ -3423,7 +3775,7 @@ def print_ai_response(text: str, use_typewriter: bool = True):
             typewriter_print(formatted_text, "ai", speed=0.002, fast_mode=fast_mode)
         else:
             # Instant printing for very short responses
-            print_with_rich(f"🤖 AI: {formatted_text}", "info")
+            print_with_rich(f"🤖 VritraAI: {formatted_text}", "info")
 
 def show_ai_thinking():
     """Show enhanced professional AI thinking indicator with multi-stage animation."""
@@ -3946,18 +4298,16 @@ def get_ai_response(prompt: str, context: Optional[str] = None) -> Optional[str]
         else:
             break
 
-    # Add context if provided
+    # Build comprehensive context
+    comprehensive_context = build_comprehensive_context(cwd=os.getcwd(), include_files=True)
+    
+    # Add user-provided context if available
     if context:
-        prompt = f"Context: {context}\n\nUser: {prompt}"
+        full_context = f"{comprehensive_context}\n\n=== USER CONTEXT ===\n{context}"
+    else:
+        full_context = comprehensive_context
     
-    # Add OS and project context
-    os_info = get_os_info()
-    project_type = detect_project_type()
-    system_context = f"OS: {os_info['system']} {os_info['release']}"
-    if project_type:
-        system_context += f", Project Type: {project_type}"
-    
-    enhanced_prompt = f"System Context: {system_context}\nCurrent Directory: {os.getcwd()}\n\n{prompt}"
+    enhanced_prompt = f"{full_context}\n\n=== USER REQUEST ===\n{prompt}"
     
     # Start animated thinking indicator
     thinking_active = show_ai_thinking()
@@ -4461,11 +4811,11 @@ def get_completer():
     builtin_commands = [
         "exit", "clear", "help", "cd", "create_file", "create_dir", "mkdir", "explain", 
         "read_file", "edit_file", "search_file", "summarize", 
-        "session", "alias", "config", "safe_mode", "project", "feedback",
-        "backup", "history", "log", "ai", "ls", "dir", "apikey", "api_base",
-        "network", "tool", "note", "script", "watch", "init", "learn",
-        "theme", "prompt", "plugin", "cron", "clip", "save_output", "resume",
-        "optimize", "analyze_system", "cheat", "tree", "find_files", "sys_info",
+        "session", "config", "project", "feedback",
+        "history", "ai", "ls", "dir", "apikey", "api_base",
+        "network", "learn",
+        "theme", "prompt", "banner",
+        "safe_mode", "optimize", "analyze_system", "cheat", "tree", "find_files", "sys_info",
         "disk_usage", "env", "path", "which", "uptime", "memory", "processes",
         "compare", "diff", "diff_dir", "diff_semantic", "hash", "encode", "decode", "time", "calc",
         "generate", "template", "validate", "format",
@@ -4474,9 +4824,13 @@ def get_completer():
         # Documentation generator
         "doc",
         # AI Code Review & Analysis Commands
-        "review", "security_scan", "optimize_code", "refactor",
+        "review", "explain_last", "security_scan", "optimize_code", "refactor",
         # Intelligent Project Detection Commands
-        "project_type", "dependencies_check", "project_health", "missing_files", "project_optimize"
+        "project_type", "dependencies_check", "project_health", "missing_files", "project_optimize",
+        # Model management
+        "model",
+        # Special file operations (handled specially but still built-in)
+        "cat", "grep"
     ]
     
     commands = builtin_commands.copy()
@@ -4663,6 +5017,10 @@ def colored_ls(args: List[str] = []):
         else:
             target_dir = arg
     
+    # Expand ~ and environment variables in target_dir before processing
+    target_dir = os.path.expanduser(target_dir)
+    target_dir = os.path.expandvars(target_dir)
+    
     try:
         # Support basic glob patterns (like * and ?) in the ls target, e.g. "ls *md"
         # This mimics the behavior of the system ls by expanding patterns before listing.
@@ -4694,6 +5052,7 @@ def colored_ls(args: List[str] = []):
             # Sort: directories first, then files alphabetically
             items = sorted(items, key=lambda x: (not x.is_dir(), x.name.lower()))
         else:
+            # Use already expanded target_dir
             path = Path(target_dir)
             
             if not path.exists():
@@ -4963,8 +5322,9 @@ def execute_command(command: str):
                 print_with_rich("\nPlease use a Python file. Example: format script.py", "info")
                 return
     
-    # Safety check for dangerous commands
-    if is_dangerous_command(command):
+    # Safety check for dangerous commands (only if safe_mode is enabled)
+    safe_mode = current_config.get('safe_mode', True) if current_config else True
+    if safe_mode and is_dangerous_command(command):
         print_with_rich(f"⚠️  Warning: '{command}' is a potentially dangerous command!", "warning")
         if not confirm_action(f"Are you sure you want to execute: {command}?"):
             print_with_rich("Command cancelled for safety.", "info")
@@ -4996,6 +5356,8 @@ def execute_command(command: str):
         summarize_command(args)
     elif cmd == "config":
         config_command(args)
+    elif cmd == "safe_mode":
+        safe_mode_command(args)
     elif cmd == "model":
         model_command(args)
     elif cmd == "project":
@@ -5026,7 +5388,20 @@ def execute_command(command: str):
     elif cmd == "session":
         session_command(args)
     elif cmd == "history":
-        history_command(args)
+        # Check if command has pipes
+        if "|" in command:
+            # Extract history part and pipe part
+            parts = command.split("|", 1)
+            history_part = parts[0].strip()
+            pipe_part = parts[1].strip()
+            
+            # Parse history arguments
+            history_args = history_part.split()[1:] if len(history_part.split()) > 1 else []
+            
+            # Execute history with pipe handling
+            history_command_with_pipe(history_args, pipe_part)
+        else:
+            history_command(args)
     elif cmd == "tree":
         _execute_and_log_builtin(command, lambda: tree_command(args))
     elif cmd == "find_files":
@@ -5126,8 +5501,8 @@ def execute_command(command: str):
         # Execute system commands with smart interactive detection
         start_time = time.time()
         
-        # Smart auto-detection: Use subprocess.run() for automatic interactive handling
-        # This approach handles ALL interactive commands automatically without hardcoding
+        # Smart approach: Use simple subprocess.run() like testt.py for all commands
+        # This ensures ALL interactive commands work properly without hardcoding
         try:
             # Check if command is interactive (can't capture output)
             is_likely_interactive = is_interactive_command(command)
@@ -5135,6 +5510,7 @@ def execute_command(command: str):
             if is_likely_interactive:
                 # For interactive commands, run without capture to allow interaction
                 # Skip logging for interactive commands as we can't capture their output
+                # Use simple subprocess.run() like testt.py - this works for all interactive commands
                 result = subprocess.run(command, shell=True)
                 execution_time = time.time() - start_time
             else:
@@ -5165,23 +5541,36 @@ def execute_command(command: str):
                 # For non-interactive errors, show exit code
                 error_msg = f"Command exited with code {result.returncode}"
                 
-                # Check if it's a "not found" type error
-                is_not_found = any(phrase in error_msg.lower() for phrase in [
-                    "no such file", "not found", "cannot find", "does not exist", 
-                    "cannot access", "no existe", "cannot open"
-                ])
+                # Combine stderr and stdout to check for "not found" patterns
+                # The actual error message is usually in stderr
+                error_text = ""
+                if hasattr(result, 'stderr') and result.stderr:
+                    error_text = result.stderr
+                elif hasattr(result, 'stdout') and result.stdout:
+                    error_text = result.stdout
                 
-                # Show simple error message
-                if is_not_found:
-                    print_with_rich("Not found", "error")
-                else:
+                # Check if it's a "not found" type error in the actual error message
+                # Also check exit code 127 which typically means "command not found"
+                is_not_found = (
+                    result.returncode == 127 or  # Standard "command not found" exit code
+                    any(phrase in error_text.lower() for phrase in [
+                        "no such file", "not found", "cannot find", "does not exist", 
+                        "cannot access", "no existe", "cannot open", "command not found",
+                        "no such file or directory"
+                    ])
+                )
+                
+                # Show error message (stderr already printed above, but show exit code too)
+                if not is_not_found:
                     print_with_rich(error_msg, "warning")
                 
-                session.add_command(command, error=error_msg)
+                # Use the actual error text for logging and recovery
+                actual_error_msg = error_text if error_text else error_msg
+                session.add_command(command, error=actual_error_msg)
                 
                 # AI-powered error explanation for "not found" errors
                 if AI_ENABLED and is_not_found:
-                    error = FileNotFoundError(error_msg)
+                    error = FileNotFoundError(actual_error_msg)
                     # Use interactive error recovery with menu options
                     should_retry = handle_error_with_recovery(error, context=f"Command: {command}", show_suggestion=True, auto_mode=False)
                     if should_retry:
@@ -5245,6 +5634,7 @@ def execute_command(command: str):
                 # Check if interactive - if so, run without capture
                 if is_interactive_command(command):
                     # For interactive commands, skip logging
+                    # Use simple subprocess.run() like testt.py - this works for all interactive commands
                     current_process = subprocess.Popen(command, shell=True)
                     current_process.wait()
                     current_process = None
@@ -5276,6 +5666,34 @@ def execute_command(command: str):
                         print(stdout)
                     if stderr:
                         print_with_rich(stderr, "error")
+                    
+                    # Handle exit codes and check for "not found" errors
+                    if exit_code != 0:
+                        # Check if it's a "not found" type error
+                        # Exit code 127 typically means "command not found"
+                        error_text = stderr if stderr else stdout
+                        is_not_found = (
+                            exit_code == 127 or  # Standard "command not found" exit code
+                            any(phrase in error_text.lower() for phrase in [
+                                "no such file", "not found", "cannot find", "does not exist", 
+                                "cannot access", "no existe", "cannot open", "command not found",
+                                "no such file or directory"
+                            ])
+                        )
+                        
+                        # Use the actual error text for logging and recovery
+                        actual_error_msg = error_text if error_text else f"Command exited with code {exit_code}"
+                        session.add_command(command, error=actual_error_msg)
+                        
+                        # AI-powered error explanation for "not found" errors
+                        if AI_ENABLED and is_not_found:
+                            error = FileNotFoundError(actual_error_msg)
+                            # Use interactive error recovery with menu options
+                            should_retry = handle_error_with_recovery(error, context=f"Command: {command}", show_suggestion=True, auto_mode=False)
+                            if should_retry:
+                                # Re-run the command once
+                                execute_command(command)
+                                return
                     
             except Exception as e:
                 error_msg = str(e)
@@ -5583,6 +6001,8 @@ def print_help():
         ("ls [options] [path]", "Rich colored directory listing (-l, -a, -la)", "green"),
         ("dir [options] [path]", "Alias for ls command", "green"),
         ("read_file <filename>", "Read and display with syntax highlighting", "green"),
+        ("cat <filename>", "Enhanced cat with syntax highlighting (no pipes)", "green"),
+        ("grep <pattern> [file]", "Enhanced grep with highlighted search terms", "green"),
         ("edit_file <filename> <instruction>", "AI-powered file editing with diff preview", "green"),
         ("search_file <pattern> <target>", "Smart pattern matching in files/directories", "green"),
         ("create_file <filename> <prompt>", "Generate files using AI with backup", "green"),
@@ -5629,6 +6049,7 @@ def print_help():
         ("ai <prompt>", "Natural language AI assistant", "magenta"),
         ("explain <command>", "Detailed command explanations", "magenta"),
         ("summarize [path]", "AI-powered directory/file analysis", "magenta"),
+        ("project", "Show current project type and directory info", "magenta"),
         ("project analyze", "Deep project structure analysis", "magenta"),
         ("learn <topic>", "Interactive AI tutoring system", "magenta"),
         ("cheat <topic>", "Generate command cheatsheets", "magenta"),
@@ -5720,7 +6141,7 @@ def print_help():
     console.print("")
     
     # AI Model Management Section
-    console.print(Text("🤖 AI MODEL MANAGEMENT:", style="bold yellow"))
+    console.print(Text("🤖 VritraAI MODEL MANAGEMENT:", style="bold yellow"))
     model_commands = [
         ("model", "List all available AI models by provider", "yellow"),
         ("model set <id>", "Switch model by ID (ds1, ll1, ms1, etc.) - FIXED: Saves permanently!", "yellow"),
@@ -5744,6 +6165,7 @@ def print_help():
         ("clear", "Clear screen", "yellow"),
         ("exit", "Exit with enhanced analytics summary", "yellow"),
         ("help", "Show this comprehensive help", "yellow"),
+        ("safe_mode [on|off]", "Control safe mode (dangerous command protection)", "yellow"),
         ("sys_info", "Comprehensive system information", "yellow"),
         ("disk_usage [path]", "Human-readable disk usage stats", "yellow"),
         ("env [var] [value]", "Environment variable management", "yellow"),
@@ -5913,7 +6335,7 @@ def print_help():
     console.print("")
     
     # Natural Language Section
-    console.print(Panel.fit(Text("💬 NATURAL LANGUAGE AI: VritraAI understands natural language!\n" +
+    console.print(Panel.fit(Text("💬 NATURAL LANGUAGE VritraAI: VritraAI understands natural language!\n" +
                                 "Try: \"find python files\", \"switch to galaxy theme\", \"use deepseek model\"", 
                                 style="magenta italic"), 
                           border_style="magenta", title="AI Magic"))
@@ -6341,7 +6763,7 @@ def edit_file_command(args: List[str]):
     if content is None:
         return
     
-    print_with_rich(f"🤖 AI editing {filepath}: {instruction}", "info")
+    print_with_rich(f"🤖 VritraAI editing {filepath}: {instruction}", "info")
     
     # Detect file type for better context
     file_ext = os.path.splitext(filepath)[1].lower()
@@ -6418,6 +6840,8 @@ def search_file_command(args: List[str]):
     
     pattern = args[0]
     target = args[1] if len(args) > 1 else "."
+    # Expand ~ and environment variables
+    target = expand_path(target)
     
     # Gitignore-style patterns to ignore
     ignore_patterns = [
@@ -6605,7 +7029,7 @@ Snippets:
 Respond with a concise, structured explanation suitable for terminal output.
 """
 
-    print_with_rich("🤖 AI performing semantic search...", "info")
+    print_with_rich("🤖 VritraAI performing semantic search...", "info")
     result = get_ai_response(prompt)
     if result:
         cleaned = clean_ai_response(result)
@@ -6613,55 +7037,320 @@ Respond with a concise, structured explanation suitable for terminal output.
         print_ai_response(cleaned, use_typewriter=True)
 
 
+def record_command_to_history(command: str):
+    """Record a command to the history file with timestamp, preventing duplicates.
+    
+    Format:
+        # YYYY-MM-DD HH:MM:SS.microseconds
+        +command
+    
+    Args:
+        command: The command string to record
+    """
+    if not command or not command.strip():
+        return
+    
+    try:
+        # Get current timestamp
+        timestamp = datetime.datetime.now()
+        timestamp_str = timestamp.strftime("%Y-%m-%d %H:%M:%S.%f")
+        
+        # Read existing history to check for duplicates
+        # Check last 10 entries to catch rapid duplicates
+        recent_commands = []
+        
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    # Read backwards to get recent entries
+                    i = len(lines) - 1
+                    entry_count = 0
+                    current_entry = {}
+                    
+                    while i >= 0 and entry_count < 10:
+                        line = lines[i].strip()
+                        if line.startswith('+'):
+                            # Command line
+                            current_entry['command'] = line[1:].strip()
+                        elif line.startswith('#'):
+                            # Timestamp line
+                            current_entry['timestamp'] = line[1:].strip()
+                            if 'command' in current_entry:
+                                recent_commands.append(current_entry)
+                                entry_count += 1
+                                current_entry = {}
+                        i -= 1
+            except Exception:
+                recent_commands = []
+        
+        # Check if this is a duplicate
+        # A duplicate is: same command recorded within 0.5 seconds
+        is_duplicate = False
+        for entry in recent_commands:
+            if entry.get('command') == command and entry.get('timestamp'):
+                try:
+                    # Parse timestamp
+                    entry_ts = datetime.datetime.strptime(entry['timestamp'], "%Y-%m-%d %H:%M:%S.%f")
+                    # Check if within 0.5 seconds (500ms) - very recent duplicate
+                    time_diff = abs((timestamp - entry_ts).total_seconds())
+                    if time_diff < 0.5:
+                        is_duplicate = True
+                        break
+                except Exception:
+                    pass
+        
+        # Only record if not a duplicate
+        if not is_duplicate:
+            # Use file locking to prevent concurrent writes
+            try:
+                import fcntl
+                use_lock = True
+            except ImportError:
+                use_lock = False
+            
+            try:
+                with open(HISTORY_FILE, 'a+', encoding='utf-8') as f:
+                    # Try to acquire exclusive lock (non-blocking) if available
+                    if use_lock:
+                        try:
+                            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except (IOError, OSError):
+                            # Lock failed, continue without lock
+                            use_lock = False
+                    
+                    # Double-check for duplicate after acquiring lock
+                    # Read the last few lines to see if same command was just written
+                    f.seek(0)  # Go to beginning
+                    all_lines = f.readlines()
+                    
+                    # Check last 4 lines (2 entries: timestamp + command each)
+                    if len(all_lines) >= 2:
+                        # Get last command entry
+                        last_lines = all_lines[-4:] if len(all_lines) >= 4 else all_lines
+                        for i in range(len(last_lines) - 1, -1, -1):
+                            line = last_lines[i].strip()
+                            if line.startswith('+'):
+                                last_cmd = line[1:].strip()
+                                # Check if it's the same command
+                                if last_cmd == command:
+                                    # Check timestamp if available
+                                    if i > 0 and last_lines[i-1].strip().startswith('#'):
+                                        try:
+                                            last_ts_str = last_lines[i-1].strip()[1:].strip()
+                                            last_ts = datetime.datetime.strptime(last_ts_str, "%Y-%m-%d %H:%M:%S.%f")
+                                            time_diff = abs((timestamp - last_ts).total_seconds())
+                                            if time_diff < 0.5:  # Within 500ms
+                                                # Duplicate found, skip
+                                                if use_lock:
+                                                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                                                return
+                                        except Exception:
+                                            pass
+                                    else:
+                                        # Same command but no timestamp, likely duplicate
+                                        if use_lock:
+                                            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                                        return
+                                break
+                    
+                    # No duplicate found, write the entry
+                    f.seek(0, 2)  # Seek to end
+                    f.write(f"# {timestamp_str}\n")
+                    f.write(f"+{command}\n")
+                    f.flush()
+                    os.fsync(f.fileno())  # Force write to disk
+                    
+                    if use_lock:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                # Fallback: simple write without locking
+                try:
+                    with open(HISTORY_FILE, 'a', encoding='utf-8') as f:
+                        f.write(f"# {timestamp_str}\n")
+                        f.write(f"+{command}\n")
+                        f.flush()
+                except Exception:
+                    pass
+        
+    except Exception as e:
+        # Silent fail - don't break the shell if history recording fails
+        pass
+
+
+def _get_history_commands(args: List[str] = None):
+    """Internal function to get history commands list.
+    
+    Returns:
+        tuple: (commands_list, total_count)
+    """
+    if not os.path.exists(HISTORY_FILE):
+        return [], 0
+    
+    with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    # Parse history entries: extract commands (lines starting with +) with their timestamps
+    commands = []
+    current_timestamp = None
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        if line.startswith('#'):
+            # Timestamp line
+            try:
+                timestamp_str = line[1:].strip()
+                current_timestamp = datetime.datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S.%f")
+            except Exception:
+                current_timestamp = None
+        elif line.startswith('+'):
+            # Command line
+            command = line[1:].strip()
+            if command:  # Only add non-empty commands
+                commands.append({
+                    'command': command,
+                    'timestamp': current_timestamp
+                })
+                current_timestamp = None  # Reset after pairing
+    
+    # Get number of commands to show
+    num_commands = None
+    if args:
+        try:
+            num_commands = int(args[0])
+        except ValueError:
+            pass
+    
+    # Filter commands to show
+    if num_commands:
+        commands_to_show = commands[-num_commands:]
+    else:
+        commands_to_show = commands
+    
+    return commands_to_show, len(commands)
 
 def history_command(args: List[str]):
-    """Show command history from prompt-toolkit FileHistory.
+    """Show command history from history file.
     
     Usage:
         history              - show all command history
         history [number]     - show last N commands
     """
     try:
-        # Read history file directly
-        if os.path.exists(HISTORY_FILE):
-            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
-                lines = [line.strip() for line in f.readlines() if line.strip()]
+        commands_to_show, total_commands = _get_history_commands(args)
+        
+        if not commands_to_show:
+            print_with_rich("No command history found.", "info")
+            return
+        
+        # Display history
+        showing_count = len(commands_to_show)
+        print_with_rich(f"\n📜 Command History (showing {showing_count} of {total_commands} commands):", "info")
+        print_with_rich("=" * 60, "default")
+        
+        for i, entry in enumerate(commands_to_show, 1):
+            # Calculate absolute command number
+            cmd_num = total_commands - len(commands_to_show) + i
             
-            # Remove duplicates while preserving order
-            seen = set()
-            unique_lines = []
-            for line in lines:
-                if line not in seen:
-                    seen.add(line)
-                    unique_lines.append(line)
-            
-            # Get number of lines to show
-            num_lines = None
-            if args:
+            # Format timestamp if available
+            timestamp_str = ""
+            if entry['timestamp']:
                 try:
-                    num_lines = int(args[0])
-                except ValueError:
-                    print_with_rich(f"Invalid number: {args[0]}. Showing all history.", "warning")
+                    timestamp_str = entry['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    timestamp_str = ""
             
-            # Show history
-            if not unique_lines:
-                print_with_rich("No command history found.", "info")
-                return
-            
-            print_with_rich(f"\n📜 Command History ({len(unique_lines)} commands):", "info")
-            
-            # Show last N lines or all
-            if num_lines:
-                lines_to_show = unique_lines[-num_lines:]
+            # Display command with timestamp
+            if timestamp_str:
+                print_with_rich(f"  {cmd_num:4d}  [{timestamp_str}]  {entry['command']}", "default")
             else:
-                lines_to_show = unique_lines
-            
-            for i, cmd in enumerate(lines_to_show, start=1):
-                # Calculate line number from the end
-                line_num = len(unique_lines) - len(lines_to_show) + i
-                print_with_rich(f"  {line_num:4d}  {cmd}", "default")
+                print_with_rich(f"  {cmd_num:4d}  {entry['command']}", "default")
+        
+        print_with_rich("=" * 60, "default")
+        
+    except Exception as e:
+        print_with_rich(f"Error reading history: {e}", "error")
+        import traceback
+        traceback.print_exc()
+
+def history_command_with_pipe(args: List[str], pipe_command: str):
+    """Show command history with pipe support (head/tail) with colored output.
+    
+    Usage:
+        history | head 5     - show first 5 commands
+        history | tail 5     - show last 5 commands
+        history 10 | head 3  - show first 3 of last 10 commands
+    """
+    try:
+        commands_to_show, total_commands = _get_history_commands(args)
+        
+        if not commands_to_show:
+            print_with_rich("No command history found.", "info")
+            return
+        
+        # Parse pipe command
+        pipe_parts = pipe_command.strip().split()
+        pipe_cmd = pipe_parts[0].lower() if pipe_parts else ""
+        pipe_num = None
+        
+        if len(pipe_parts) > 1:
+            try:
+                pipe_num = int(pipe_parts[1])
+            except ValueError:
+                pass
+        
+        # Apply pipe filtering
+        original_count = len(commands_to_show)
+        if pipe_cmd == "head":
+            if pipe_num:
+                commands_to_show = commands_to_show[:pipe_num]
+            else:
+                commands_to_show = commands_to_show[:10]  # Default head 10
+        elif pipe_cmd == "tail":
+            if pipe_num:
+                commands_to_show = commands_to_show[-pipe_num:]
+            else:
+                commands_to_show = commands_to_show[-10:]  # Default tail 10
         else:
-            print_with_rich("No command history file found.", "info")
+            # Unknown pipe command, just show all
+            pass
+        
+        # Display history with Rich formatting (same as regular history)
+        showing_count = len(commands_to_show)
+        pipe_info = f" | {pipe_cmd} {pipe_num}" if pipe_num else f" | {pipe_cmd}"
+        print_with_rich(f"\n📜 Command History (showing {showing_count} of {total_commands} commands{pipe_info}):", "info")
+        print_with_rich("=" * 60, "default")
+        
+        for i, entry in enumerate(commands_to_show, 1):
+            # Calculate absolute command number
+            # For head: start from 1
+            # For tail: calculate from total
+            if pipe_cmd == "head":
+                cmd_num = i
+            elif pipe_cmd == "tail":
+                cmd_num = total_commands - len(commands_to_show) + i
+            else:
+                cmd_num = total_commands - len(commands_to_show) + i
+            
+            # Format timestamp if available
+            timestamp_str = ""
+            if entry['timestamp']:
+                try:
+                    timestamp_str = entry['timestamp'].strftime("%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    timestamp_str = ""
+            
+            # Display command with timestamp (colored output)
+            if timestamp_str:
+                print_with_rich(f"  {cmd_num:4d}  [{timestamp_str}]  {entry['command']}", "default")
+            else:
+                print_with_rich(f"  {cmd_num:4d}  {entry['command']}", "default")
+        
+        print_with_rich("=" * 60, "default")
+        
     except Exception as e:
         print_with_rich(f"Error reading history: {e}", "error")
 
@@ -7089,6 +7778,8 @@ IMPORTANT:
 def summarize_command(args: List[str]):
     """Summarize directory or file."""
     target = args[0] if args else "."
+    # Expand ~ and environment variables
+    target = expand_path(target)
     
     if os.path.isdir(target):
         # Summarize directory
@@ -7157,49 +7848,6 @@ def session_command(args: List[str]):
         session.commands_history = []
         session.modified_files = []
         print_with_rich("Session data cleared", "success")
-
-def alias_command(args: List[str]):
-    """Manage command aliases."""
-    global ALIASES
-    
-    if not args:
-        # List all aliases
-        if ALIASES:
-            print_with_rich("Defined aliases:", "info")
-            for alias, command in ALIASES.items():
-                print_with_rich(f"{alias} -> {command}", "info")
-        else:
-            print_with_rich("No aliases defined", "info")
-        return
-    
-    if args[0] == "add" and len(args) >= 3:
-        # Add new alias: alias add name command
-        name = args[1]
-        command = " ".join(args[2:])
-        ALIASES[name] = command
-        print_with_rich(f"Alias added: {name} -> {command}", "success")
-    elif args[0] == "remove" and len(args) >= 2:
-        # Remove alias: alias remove name
-        name = args[1]
-        if name in ALIASES:
-            del ALIASES[name]
-            print_with_rich(f"Alias removed: {name}", "success")
-        else:
-            print_with_rich(f"Alias not found: {name}", "error")
-    elif args[0] == "clear":
-        # Clear all aliases
-        ALIASES = {}
-        print_with_rich("All aliases cleared", "success")
-    elif "=" in args[0]:
-        # Quick syntax: alias name=command
-        name, command = args[0].split("=", 1)
-        if len(args) > 1:
-            command += " " + " ".join(args[1:])
-        ALIASES[name] = command
-        print_with_rich(f"Alias added: {name} -> {command}", "success")
-    else:
-        print_with_rich("Usage: alias [add <name> <command>|remove <name>|clear]", "info")
-        print_with_rich("   or: alias <name>=<command>", "info")
 
 def _show_available_models():
     """Display all available AI models with full content visibility."""
@@ -7790,7 +8438,7 @@ def config_command(args: List[str]):
     print("═" * 50)
     
     # API Configuration
-    print_with_rich("\n🤖 AI Configuration:", "info")
+    print_with_rich("\n🤖 VritraAI Configuration:", "info")
     print_with_rich(f"  API Base: {API_BASE}", "default")
     print_with_rich(f"  AI Enabled: {'✅ Yes' if AI_ENABLED else '❌ No'}", "success" if AI_ENABLED else "error")
     
@@ -7861,8 +8509,63 @@ def config_command(args: List[str]):
     print_with_rich("  model          - Manage AI models", "default")
     print_with_rich("  theme          - Change UI themes", "default")
     print_with_rich("  apikey         - Manage API keys", "default")
+    print_with_rich("  safe_mode      - Control safe mode (dangerous command protection)", "default")
     
     print("═" * 50)
+
+def safe_mode_command(args: List[str]):
+    """Control safe mode setting."""
+    global current_config
+    
+    if not args:
+        # Show current safe mode status
+        safe_mode = current_config.get('safe_mode', True) if current_config else True
+        status = "✅ Enabled" if safe_mode else "❌ Disabled"
+        color = "success" if safe_mode else "warning"
+        print_with_rich(f"🛡️  Safe Mode: {status}", color)
+        print_with_rich("\nSafe mode protects you from potentially dangerous commands by asking for confirmation.", "info")
+        print_with_rich("\n📋 Manage Safe Mode:", "info")
+        print_with_rich("  safe_mode on      - Enable safe mode", "default")
+        print_with_rich("  safe_mode off     - Disable safe mode", "default")
+        print_with_rich("  safe_mode enable  - Enable safe mode (alias)", "default")
+        print_with_rich("  safe_mode disable - Disable safe mode (alias)", "default")
+        return
+    
+    subcmd = args[0].lower()
+    
+    if subcmd in ["on", "enable", "true", "1"]:
+        new_value = True
+        action = "enabled"
+    elif subcmd in ["off", "disable", "false", "0"]:
+        new_value = False
+        action = "disabled"
+    else:
+        print_with_rich(f"Unknown option: {subcmd}", "error")
+        print_with_rich("Usage: safe_mode [on|off|enable|disable]", "info")
+        return
+    
+    # Update config
+    if not current_config:
+        current_config = {}
+    
+    current_config['safe_mode'] = new_value
+    
+    # Save to config
+    try:
+        if config_manager:
+            success = config_manager.set_value('safe_mode', new_value)
+            if success:
+                print_with_rich(f"🛡️  Safe mode {action} successfully!", "success" if new_value else "warning")
+            else:
+                print_with_rich("⚠️  Failed to save safe mode setting", "error")
+        else:
+            from config import save_config
+            if save_config(current_config):
+                print_with_rich(f"🛡️  Safe mode {action} successfully!", "success" if new_value else "warning")
+            else:
+                print_with_rich("⚠️  Failed to save safe mode setting", "error")
+    except Exception as e:
+        print_with_rich(f"⚠️  Error saving safe mode: {e}", "error")
 
 def network_check() -> bool:
     """Check if network/internet connection is available."""
@@ -8218,291 +8921,6 @@ def network_command(args: List[str]):
 
 # Tool command removed as per user request
 
-def note_command(args: List[str]):
-    """Store context notes for AI."""
-    if not args:
-        # Show stored notes
-        if hasattr(session, 'notes') and session.notes:
-            print_with_rich("📝 Stored notes:", "info")
-            for i, note in enumerate(session.notes, 1):
-                print_with_rich(f"  {i}. {note}", "info")
-        else:
-            print_with_rich("No notes stored", "info")
-        return
-    
-    if args[0] == "clear":
-        session.notes = []
-        print_with_rich("Notes cleared", "success")
-        return
-    
-    # Add note
-    note_text = " ".join(args)
-    if not hasattr(session, 'notes'):
-        session.notes = []
-    
-    session.notes.append(note_text)
-    session.ai_context.append(f"Note: {note_text}")
-    print_with_rich(f"📝 Note added: {note_text}", "success")
-
-def script_command(args: List[str]):
-    """Generate, manage, and run automation scripts."""
-    if not args:
-        print_with_rich("Script commands:", "info")
-        print_with_rich("  generate <description> - Generate script from description", "info")
-        print_with_rich("  list                   - List saved scripts", "info")
-        print_with_rich("  run <name>            - Run a saved script", "info")
-        print_with_rich("  save <name> <content>  - Save a script", "info")
-        print_with_rich("  remove <name>         - Remove a script", "info")
-        return
-    
-    subcmd = args[0]
-    scripts_dir = Path(SCRIPTS_DIR)
-    
-    if subcmd == "generate":
-        if not AI_ENABLED:
-            print_with_rich("AI is required for script generation", "warning")
-            return
-        
-        if len(args) < 2:
-            print_with_rich("Usage: script generate <description>", "info")
-            return
-        
-        description = " ".join(args[1:])
-        os_type = platform.system()
-        
-        prompt = f"""Generate a {"PowerShell" if os_type == "Windows" else "bash"} script for the following task: {description}
-        
-Requirements:
-- Make it safe and include error checking
-- Add comments explaining each step
-- Make it executable on {os_type}
-- Include usage instructions at the top
-        
-Provide ONLY the script code, no explanations."""
-        
-        print_with_rich("🔧 Generating script...", "info")
-        script_content = get_ai_response(prompt)
-        
-        if script_content and script_content.strip():
-            # Clean up the response
-            if script_content.startswith("```"):
-                script_content = script_content.split("```", 2)[1]
-                if script_content.startswith(("bash", "powershell", "ps1", "shell")):
-                    script_content = script_content.split("\n", 1)[1]
-            
-            script_content = script_content.strip()
-            
-            # Show the script
-            if RICH_AVAILABLE and console:
-                from rich.syntax import Syntax
-                syntax = Syntax(script_content, "powershell" if os_type == "Windows" else "bash", theme="monokai")
-                console.print(Panel(syntax, title="Generated Script", border_style="green"))
-            else:
-                print(f"Generated Script:\n{script_content}")
-            
-            # Ask to save
-            script_name = input("Enter name to save script (or press Enter to skip): ").strip()
-            if script_name:
-                ext = ".ps1" if os_type == "Windows" else ".sh"
-                script_file = scripts_dir / f"{script_name}{ext}"
-                
-                try:
-                    with open(script_file, 'w', encoding='utf-8') as f:
-                        f.write(script_content)
-                    
-                    # Make executable on Unix-like systems
-                    if os_type != "Windows":
-                        os.chmod(script_file, 0o755)
-                    
-                    print_with_rich(f"💾 Script saved: {script_file}", "success")
-                    
-                    # Ask to run immediately
-                    if confirm_action("Run the script now?"):
-                        script_command(["run", script_name])
-                    else:
-                        print_with_rich("Script execution cancelled", "info")
-                
-                except Exception as e:
-                    print_with_rich(f"Error saving script: {e}", "error")
-        else:
-            print_with_rich("❌ Failed to generate script. Please try again or check your prompt.", "error")
-    
-    elif subcmd == "list":
-        scripts = list(scripts_dir.glob("*"))
-        if scripts:
-            print_with_rich("📜 Saved scripts:", "info")
-            for script in scripts:
-                size = script.stat().st_size
-                mtime = datetime.datetime.fromtimestamp(script.stat().st_mtime)
-                print_with_rich(f"  {script.stem} ({size} bytes, {mtime.strftime('%Y-%m-%d %H:%M')})", "info")
-        else:
-            print_with_rich("No scripts saved", "info")
-    
-    elif subcmd == "run" and len(args) > 1:
-        script_name = args[1]
-        os_type = platform.system()
-        ext = ".ps1" if os_type == "Windows" else ".sh"
-        script_file = scripts_dir / f"{script_name}{ext}"
-        
-        if not script_file.exists():
-            print_with_rich(f"Script not found: {script_name}", "error")
-            return
-        
-        print_with_rich(f"🚀 Running script: {script_name}", "info")
-        
-        if os_type == "Windows":
-            execute_command(f"powershell -ExecutionPolicy Bypass -File '{script_file}'")
-        else:
-            execute_command(f"bash '{script_file}'")
-    
-    elif subcmd == "save" and len(args) > 2:
-        script_name = args[1]
-        script_content = " ".join(args[2:])
-        
-        os_type = platform.system()
-        ext = ".ps1" if os_type == "Windows" else ".sh"
-        script_file = scripts_dir / f"{script_name}{ext}"
-        
-        try:
-            with open(script_file, 'w', encoding='utf-8') as f:
-                f.write(script_content)
-            print_with_rich(f"💾 Script saved: {script_file}", "success")
-        except Exception as e:
-            print_with_rich(f"Error saving script: {e}", "error")
-    
-    elif subcmd == "remove" and len(args) > 1:
-        script_name = args[1]
-        os_type = platform.system()
-        ext = ".ps1" if os_type == "Windows" else ".sh"
-        script_file = scripts_dir / f"{script_name}{ext}"
-        
-        if script_file.exists():
-            if confirm_action(f"Remove script '{script_name}'?"):
-                script_file.unlink()
-                print_with_rich(f"Script removed: {script_name}", "success")
-            else:
-                print_with_rich("Script removal cancelled", "info")
-        else:
-            print_with_rich(f"Script not found: {script_name}", "error")
-    
-    else:
-        script_command([])  # Show help
-
-def watch_command(args: List[str]):
-    """Watch files or directories for changes."""
-    if not args:
-        print_with_rich("Usage: watch <file_or_directory> [interval_seconds]", "info")
-        return
-    
-    target = args[0]
-    interval = int(args[1]) if len(args) > 1 else 2
-    
-    if not os.path.exists(target):
-        print_with_rich(f"Path not found: {target}", "error")
-        return
-    
-    print_with_rich(f"👀 Watching {target} (press Ctrl+C to stop)...", "info")
-    
-    last_modified = {}
-    
-    try:
-        while True:
-            if os.path.isfile(target):
-                current_mtime = os.path.getmtime(target)
-                if target not in last_modified:
-                    last_modified[target] = current_mtime
-                elif current_mtime != last_modified[target]:
-                    print_with_rich(f"📄 File changed: {target}", "warning")
-                    last_modified[target] = current_mtime
-                    
-                    # Notify if log patterns found
-                    if target.endswith('.log'):
-                        try:
-                            with open(target, 'r', encoding='utf-8', errors='ignore') as f:
-                                lines = f.readlines()[-10:]  # Last 10 lines
-                                for line in lines:
-                                    if any(pattern in line.lower() for pattern in ['error', 'crash', 'exception', 'failed']):
-                                        print_with_rich(f"⚠️  Issue detected: {line.strip()}", "error")
-                        except Exception:
-                            pass
-            
-            elif os.path.isdir(target):
-                for root, _, files in os.walk(target):
-                    for file in files:
-                        filepath = os.path.join(root, file)
-                        try:
-                            current_mtime = os.path.getmtime(filepath)
-                            if filepath not in last_modified:
-                                last_modified[filepath] = current_mtime
-                            elif current_mtime != last_modified[filepath]:
-                                print_with_rich(f"📄 File changed: {filepath}", "warning")
-                                last_modified[filepath] = current_mtime
-                        except (OSError, PermissionError):
-                            continue
-            
-            time.sleep(interval)
-    
-    except KeyboardInterrupt:
-        print_with_rich("\n⏹️  Watch stopped", "info")
-
-def init_command(args: List[str]):
-    """Initialize project structures."""
-    if not args:
-        print_with_rich("Usage: init <project_type>", "info")
-        print_with_rich("Available types: dev, flask, react, python, go, rust", "info")
-        return
-    
-    project_type = args[0].lower()
-    
-    if project_type == "dev":
-        # Generic development structure
-        dirs = ['src', 'tests', 'docs', 'scripts', 'data']
-        files = {
-            'README.md': '# Project\n\nDescription of your project.\n',
-            '.gitignore': '*.pyc\n__pycache__/\n.env\n',
-            'requirements.txt': '# Add your dependencies here\n'
-        }
-    
-    elif project_type == "flask":
-        dirs = ['app', 'tests', 'static', 'templates']
-        files = {
-            'app.py': '''from flask import Flask\n\napp = Flask(__name__)\n\n@app.route('/')\ndef hello():\n    return "Hello, World!"\n\nif __name__ == '__main__':\n    app.run(debug=True)\n''',
-            'requirements.txt': 'Flask>=2.0.0\n',
-            'README.md': '# Flask Project\n\nA Flask web application.\n'
-        }
-    
-    elif project_type == "python":
-        dirs = ['src', 'tests', 'docs']
-        files = {
-            'main.py': '#!/usr/bin/env python3\n\ndef main():\n    print("Hello, World!")\n\nif __name__ == "__main__":\n    main()\n',
-            'requirements.txt': '# Dependencies\n',
-            'README.md': '# Python Project\n'
-        }
-    
-    else:
-        if AI_ENABLED:
-            ai_command(f"create project structure for {project_type}")
-        else:
-            print_with_rich(f"Unknown project type: {project_type}", "error")
-        return
-    
-    # Create structure
-    print_with_rich(f"🏗️  Creating {project_type} project structure...", "info")
-    
-    for dir_name in dirs:
-        os.makedirs(dir_name, exist_ok=True)
-        print_with_rich(f"  Created directory: {dir_name}/", "success")
-    
-    for filename, content in files.items():
-        if not os.path.exists(filename):
-            with open(filename, 'w', encoding='utf-8') as f:
-                f.write(content)
-            print_with_rich(f"  Created file: {filename}", "success")
-        else:
-            print_with_rich(f"  Skipped existing: {filename}", "warning")
-    
-    print_with_rich(f"✅ {project_type.title()} project initialized!", "success")
-
 def learn_command(args: List[str]):
     """AI-powered learning assistant."""
     if not AI_ENABLED:
@@ -8599,205 +9017,6 @@ def prompt_command(args: List[str]):
         print_with_rich(f"Description: {PROMPT_STYLES[style]['description']}", "info")
     else:
         print_with_rich(f"Unknown prompt style: {style}. Available: {', '.join(PROMPT_STYLES.keys())}", "error")
-
-def plugin_command(args: List[str]):
-    """Manage plugins."""
-    if not args:
-        print_with_rich("Plugin commands:", "info")
-        print_with_rich("  list    - List installed plugins", "info")
-        print_with_rich("  load    - Load/reload plugins", "info")
-        print_with_rich("  create  - Create new plugin template", "info")
-        return
-    
-    subcmd = args[0]
-    plugins_dir = Path(PLUGINS_DIR)
-    
-    if subcmd == "list":
-        plugins = list(plugins_dir.glob("*.py"))
-        if plugins:
-            print_with_rich("Installed plugins:", "info")
-            for plugin in plugins:
-                print_with_rich(f"  {plugin.stem}", "info")
-        else:
-            print_with_rich("No plugins installed", "info")
-    
-    elif subcmd == "create" and len(args) > 1:
-        plugin_name = args[1]
-        plugin_file = plugins_dir / f"{plugin_name}.py"
-        
-        template = f'''#!/usr/bin/env python3
-"""
-{plugin_name} Plugin for VritraAI Shell
-"""
-
-def main(args):
-    """Main plugin function."""
-    print(f"Hello from {plugin_name} plugin!")
-    print(f"Arguments: {args}")
-    return True
-
-def info():
-    """Plugin information."""
-    return {{
-        "name": "{plugin_name}",
-        "version": "1.0.0", 
-        "description": "A {plugin_name} plugin",
-        "author": "VritraAI User"
-    }}
-'''
-        
-        try:
-            with open(plugin_file, 'w', encoding='utf-8') as f:
-                f.write(template)
-            print_with_rich(f"Plugin template created: {plugin_file}", "success")
-        except Exception as e:
-            print_with_rich(f"Error creating plugin: {e}", "error")
-    
-    elif subcmd == "load":
-        print_with_rich("Plugin system loaded (dynamic loading not yet implemented)", "info")
-
-def cron_command(args: List[str]):
-    """Generate cron job syntax."""
-    if not AI_ENABLED:
-        print_with_rich("AI is required for cron generation", "warning")
-        return
-    
-    if not args:
-        print_with_rich("Usage: cron <description>", "info")
-        print_with_rich("Example: cron 'backup database every day at 2 AM'", "info")
-        return
-    
-    description = " ".join(args)
-    
-    prompt = f"""Generate a cron job entry for this task: {description}
-    
-Provide:
-1. The complete cron syntax
-2. Explanation of the timing
-3. Example of how to add it to crontab
-
-Format the response clearly for terminal display."""
-    
-    print_with_rich("⏰ Generating cron job...", "info")
-    cron_info = get_ai_response(prompt)
-    
-    if cron_info:
-        if RICH_AVAILABLE and console:
-            console.print(Panel(cron_info, title="⏰ Cron Job Generator", border_style="yellow"))
-        else:
-            print(f"\nCron Job:\n{cron_info}\n")
-
-def clip_command(args: List[str]):
-    """Copy content to clipboard."""
-    if not args:
-        print_with_rich("Usage: clip <text_to_copy>", "info")
-        return
-    
-    text = " ".join(args)
-    
-    try:
-        # Try different clipboard methods
-        if platform.system() == "Windows":
-            import subprocess
-            process = subprocess.Popen(['clip'], stdin=subprocess.PIPE, text=True)
-            process.communicate(input=text)
-            print_with_rich(f"📋 Copied to clipboard: {text[:50]}{'...' if len(text) > 50 else ''}", "success")
-        elif platform.system() == "Darwin":  # macOS
-            import subprocess
-            subprocess.run(['pbcopy'], input=text.encode(), check=True)
-            print_with_rich(f"📋 Copied to clipboard: {text[:50]}{'...' if len(text) > 50 else ''}", "success")
-        else:  # Linux
-            try:
-                import subprocess
-                subprocess.run(['xclip', '-selection', 'clipboard'], input=text.encode(), check=True)
-                print_with_rich(f"📋 Copied to clipboard: {text[:50]}{'...' if len(text) > 50 else ''}", "success")
-            except FileNotFoundError:
-                print_with_rich("xclip not found. Install with: sudo apt-get install xclip", "warning")
-    except Exception as e:
-        print_with_rich(f"Error copying to clipboard: {e}", "error")
-
-def save_output_command(args: List[str]):
-    """Save command output to file."""
-    if len(args) < 2:
-        print_with_rich("Usage: save_output <filename> <command>", "info")
-        return
-    
-    filename = args[0]
-    command = " ".join(args[1:])
-    
-    try:
-        # Execute command and capture output
-        process = subprocess.Popen(
-            command, 
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        stdout, stderr = process.communicate()
-        
-        # Save to file
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(f"Command: {command}\n")
-            f.write(f"Timestamp: {datetime.datetime.now()}\n")
-            f.write(f"Exit Code: {process.returncode}\n")
-            f.write("\n--- STDOUT ---\n")
-            f.write(stdout)
-            if stderr:
-                f.write("\n--- STDERR ---\n")
-                f.write(stderr)
-        
-        print_with_rich(f"💾 Output saved to: {filename}", "success")
-        
-        # Also display the output
-        if stdout:
-            print(stdout)
-        if stderr:
-            print_with_rich(stderr, "error")
-            
-    except Exception as e:
-        print_with_rich(f"Error saving output: {e}", "error")
-
-def resume_command(args: List[str]):
-    """Resume a previous session."""
-    sessions_dir = Path.home() / ".vritraai_sessions"
-    sessions_dir.mkdir(exist_ok=True)
-    
-    if not args:
-        # List available sessions
-        sessions = list(sessions_dir.glob("*.json"))
-        if sessions:
-            print_with_rich("Available sessions:", "info")
-            for session_file in sessions:
-                mtime = datetime.datetime.fromtimestamp(session_file.stat().st_mtime)
-                print_with_rich(f"  {session_file.stem} ({mtime.strftime('%Y-%m-%d %H:%M')})", "info")
-        else:
-            print_with_rich("No saved sessions found", "info")
-        return
-    
-    session_name = args[0]
-    session_file = sessions_dir / f"{session_name}.json"
-    
-    if not session_file.exists():
-        print_with_rich(f"Session not found: {session_name}", "error")
-        print_with_rich("Use 'resume' without arguments to see available sessions.", "info")
-        return
-    
-    try:
-        with open(session_file, 'r', encoding='utf-8') as f:
-            session_data = json.load(f)
-        
-        # Restore session context
-        session.ai_context = session_data.get('ai_context', [])
-        session.notes = session_data.get('notes', [])
-        session.modified_files = session_data.get('modified_files', [])
-        
-        print_with_rich(f"🔄 Session '{session_name}' resumed", "success")
-        print_with_rich(f"Context items: {len(session.ai_context)}", "info")
-        print_with_rich(f"Notes: {len(session.notes)}", "info")
-        
-    except Exception as e:
-        print_with_rich(f"Error resuming session: {e}", "error")
 
 def optimize_command(args: List[str]):
     """Optimize system and clean up files."""
@@ -9006,7 +9225,7 @@ Please provide:
 
 Keep the analysis concise but informative."""
             
-            print_with_rich("🤖 AI is analyzing your project...", "info")
+            print_with_rich("🤖 VritraAI is analyzing your project...", "info")
             analysis = get_ai_response(prompt)
             
             if analysis:
@@ -9031,15 +9250,15 @@ def ai_command(prompt):
         print_with_rich("Please provide a prompt for the AI.", "info")
         return
 
-    # Enhanced AI prompt with more sophisticated decision making
-    context_info = f"Context: You're running on {get_os_info()['system']} in {os.getcwd()}."
-    project_info = f"Project type: {detect_project_type() or 'Unknown'}"
+    # Enhanced AI prompt with comprehensive context
+    comprehensive_context = build_comprehensive_context(cwd=os.getcwd(), include_files=True)
     recent_commands = f"Recent commands: {[cmd['command'] for cmd in session.commands_history[-3:]] if session.commands_history else 'None'}"
     
     ai_prompt = f"""You are VritraAI, an intelligent terminal assistant. The user's request is: '{prompt}'
 
-{context_info}
-{project_info} 
+{comprehensive_context}
+
+=== RECENT COMMAND HISTORY ===
 {recent_commands}
 
 IMPORTANT: For file creation requests (tools, scripts, programs, web apps, etc.), you MUST respond with ONLY JSON in this exact format:
@@ -9138,7 +9357,7 @@ CRITICAL FORMATTING RULES:
                 elif action == "run_command":
                     command = data.get("command")
                     if command:
-                        print_with_rich(f"🤖 AI suggests running: {command}", "info")
+                        print_with_rich(f"🤖 VritraAI suggests running: {command}", "info")
                         if confirm_action("Execute this command?"):
                             execute_command(command)
                         else:
@@ -9218,6 +9437,8 @@ CRITICAL FORMATTING RULES:
 def tree_command(args: List[str]):
     """Show directory tree structure."""
     target_dir = args[0] if args else "."
+    # Expand ~ and environment variables
+    target_dir = expand_path(target_dir)
     max_depth = int(args[1]) if len(args) > 1 and args[1].isdigit() else 3
     
     def print_tree(path, prefix="", depth=0, max_depth=3):
@@ -9330,6 +9551,8 @@ def sys_info_command(args: List[str]):
 def disk_usage_command(args: List[str]):
     """Show disk usage information."""
     target = args[0] if args else "."
+    # Expand ~ and environment variables
+    target = expand_path(target)
     
     if not os.path.exists(target):
         print_with_rich(f"Path not found: {target}", "error")
@@ -9793,7 +10016,7 @@ Ignore purely cosmetic formatting or comment-only changes when possible.
 Provide a clear, structured summary of the differences and their impact.
 """
         
-        print_with_rich("🤖 AI analyzing semantic differences...", "info")
+        print_with_rich("🤖 VritraAI analyzing semantic differences...", "info")
         result = get_ai_response(prompt)
         if not result:
             raise APIError("Failed to generate semantic diff.")
@@ -10264,11 +10487,11 @@ Be specific, actionable, and professional. Focus on practical solutions.
     
     # Get AI response
     try:
-        print_with_rich("🤖 Getting AI explanation...", "info")
+        print_with_rich("🤖 Getting VritraAI explanation...", "info")
         response = get_ai_response(prompt)
         if response:
             print()
-            print_with_rich("💡 AI Explanation:", "bold cyan")
+            print_with_rich("💡 VritraAI Explanation:", "bold cyan")
             print()
             # Clean and display the response with streaming effect and code block highlighting
             cleaned_response = clean_ai_response(response)
@@ -10364,7 +10587,7 @@ Provide specific feedback with:
 
 Format as a clear, structured review report."""
     
-    print_with_rich("🤖 AI analyzing code...", "info")
+    print_with_rich("🤖 VritraAI analyzing code...", "info")
     review_result = get_ai_response(prompt)
     
     if review_result:
@@ -10484,7 +10707,7 @@ Provide:
 
 Format as a structured security assessment report."""
     
-    print_with_rich("🛡️ AI performing security analysis...", "info")
+    print_with_rich("🛡️ VritraAI performing security analysis...", "info")
     security_result = get_ai_response(prompt)
     
     if security_result:
@@ -10605,7 +10828,7 @@ Provide:
 Make sure to provide the full optimized code (not just snippets) in a properly formatted code block with syntax highlighting.
 Prioritize optimizations by impact and implementation difficulty."""
     
-    print_with_rich("🚀 AI analyzing optimization opportunities...", "info")
+    print_with_rich("🚀 VritraAI analyzing optimization opportunities...", "info")
     optimization_result = get_ai_response(prompt)
     
     if optimization_result:
@@ -10786,7 +11009,7 @@ Focus on:
 
 Provide the refactored code in proper code blocks with clear explanations."""
     
-    print_with_rich("🤖 AI planning refactoring strategy...", "info")
+    print_with_rich("🤖 VritraAI planning refactoring strategy...", "info")
     refactor_result = get_ai_response(prompt)
     
     if refactor_result:
@@ -10853,6 +11076,8 @@ def _apply_refactoring_interactively(file_path: str, refactor_result: str):
 def project_type_command(args: List[str]):
     """Enhanced project type detection with AI analysis."""
     target_dir = args[0] if args else "."
+    # Expand ~ and environment variables
+    target_dir = expand_path(target_dir)
     
     if not os.path.isdir(target_dir):
         print_with_rich(f"❌ Directory not found: {target_dir}", "error")
@@ -11045,7 +11270,7 @@ def _analyze_project_structure(directory: str) -> dict:
 
 def _ai_project_analysis(directory: str, project_info: dict):
     """AI-powered deeper project analysis."""
-    print_with_rich("\n🤖 AI performing deeper analysis...", "info")
+    print_with_rich("\n🤖 VritraAI performing deeper analysis...", "info")
     
     # Prepare project summary for AI
     summary = f"""Project Directory: {directory}
@@ -11074,13 +11299,15 @@ Provide a comprehensive but concise analysis."""
     
     ai_analysis = get_ai_response(prompt)
     if ai_analysis:
-        print_with_rich("\n🤖 AI Project Analysis\n", "info")
+        print_with_rich("\n🤖 VritraAI Project Analysis\n", "info")
         print_ai_response(ai_analysis, use_typewriter=True)
         print()
 
 def dependencies_check_command(args: List[str]):
     """Check for outdated dependencies and security issues."""
     target_dir = args[0] if args else "."
+    # Expand ~ and environment variables
+    target_dir = expand_path(target_dir)
     
     if not os.path.isdir(target_dir):
         print_with_rich(f"❌ Directory not found: {target_dir}", "error")
@@ -11275,6 +11502,8 @@ Focus on actionable recommendations for dependency management."""
 def project_health_command(args: List[str]):
     """Comprehensive project health analysis."""
     target_dir = args[0] if args else "."
+    # Expand ~ and environment variables
+    target_dir = expand_path(target_dir)
     
     if not os.path.isdir(target_dir):
         print_with_rich(f"❌ Directory not found: {target_dir}", "error")
@@ -11430,7 +11659,7 @@ def _display_health_report(report: dict):
 
 def _ai_health_analysis(directory: str, health_report: dict):
     """AI-powered project health analysis."""
-    print_with_rich("\n🤖 AI performing comprehensive health analysis...", "info")
+    print_with_rich("\n🤖 VritraAI performing comprehensive health analysis...", "info")
     
     # Prepare health summary
     summary = f"""Project Health Summary:
@@ -11484,6 +11713,8 @@ Provide specific, actionable recommendations prioritized by impact and effort.""
 def missing_files_command(args: List[str]):
     """AI suggests missing files for the project."""
     target_dir = args[0] if args else "."
+    # Expand ~ and environment variables
+    target_dir = expand_path(target_dir)
     
     if not os.path.isdir(target_dir):
         print_with_rich(f"❌ Directory not found: {target_dir}", "error")
@@ -11541,7 +11772,7 @@ For each suggestion:
 
 Focus on files that would have the biggest positive impact on project quality and maintainability."""
     
-    print_with_rich("🤖 AI analyzing project structure and suggesting improvements...", "info")
+    print_with_rich("🤖 VritraAI analyzing project structure and suggesting improvements...", "info")
     suggestions = get_ai_response(prompt)
     
     if suggestions:
@@ -11566,6 +11797,8 @@ Focus on files that would have the biggest positive impact on project quality an
 def project_optimize_command(args: List[str]):
     """AI suggests project optimizations."""
     target_dir = args[0] if args else "."
+    # Expand ~ and environment variables
+    target_dir = expand_path(target_dir)
     
     if not os.path.isdir(target_dir):
         print_with_rich(f"❌ Directory not found: {target_dir}", "error")
@@ -11717,7 +11950,7 @@ For each recommendation:
 
 Prioritize recommendations by impact vs effort ratio."""
     
-    print_with_rich("🤖 AI generating comprehensive optimization recommendations...", "info")
+    print_with_rich("🤖 VritraAI generating comprehensive optimization recommendations...", "info")
     optimization_result = get_ai_response(prompt)
     
     if optimization_result:
@@ -11847,6 +12080,7 @@ def apikey_command(args: List[str]):
         if not save_success:
             try:
                 from config import save_config
+                sync_config_version(current_config)
                 save_success = save_config(current_config)
             except Exception as e:
                 print_with_rich(f"⚠️  Warning: Failed to save config ({e})", "warning")
@@ -11894,6 +12128,7 @@ def apikey_command(args: List[str]):
         if not save_success:
             try:
                 from config import save_config
+                sync_config_version(current_config)
                 save_success = save_config(current_config)
             except Exception as e:
                 print_with_rich(f"⚠️  Warning: Failed to save config ({e})", "warning")
@@ -12043,7 +12278,7 @@ def apikey_command(args: List[str]):
         
         if test_response:
             print_with_rich("✅ API key test successful!", "success")
-            print_with_rich(f"🤖 AI Response: {test_response}", "info")
+            print_with_rich(f"🤖 VritraAI Response: {test_response}", "info")
         else:
             print_with_rich("❌ API key test failed. Please check your key and internet connection.", "error")
     
@@ -12227,7 +12462,7 @@ BANNERS: Dict[str, Dict[str, str]] = {
 
  * Documentation:  https://vritraai.vritrasec.com/docs/
  * Management:     https://github.com/VritraSecz/VritraAI
- * Support:        https://vritrasec.com/more/contact/
+ * Support:        https://vritrasec.com/more/get-in-touch/
 
   System information as of {current_time}:
 
@@ -13283,7 +13518,7 @@ def render_default_banner(stats: Dict[str, str]) -> None:
 
 {CYAN_VALUE}* Documentation:  https://vritraai.vritrasec.com/docs/{RESET}
 {CYAN_VALUE}* Management:     https://github.com/VritraSecz/VritraAI{RESET}
-{CYAN_VALUE}* Support:        https://vritrasec.com/more/contact/{RESET}
+{CYAN_VALUE}* Support:        https://vritrasec.com/more/get-in-touch/{RESET}
 
 {LABEL}System information as of Mon Nov {CYAN_VALUE}{day_str} {YELLOW_NUM}{time_str}{RESET}  {CYAN_VALUE}{year_str}{RESET}:
 
@@ -13593,6 +13828,215 @@ def show_motd():
 
     render_banner(banner_id)
 
+# --- Version Info and What's New ---
+def extract_version_number(version_str: str) -> tuple:
+    """Extract version number from version string (e.g., 'v0.29.5' -> (0, 29, 5))"""
+    try:
+        # Remove 'v' prefix if present
+        version_str = version_str.lstrip('vV')
+        parts = version_str.split('.')
+        major = int(parts[0]) if len(parts) > 0 else 0
+        minor = int(parts[1]) if len(parts) > 1 else 0
+        patch = int(parts[2]) if len(parts) > 2 else 0
+        return (major, minor, patch)
+    except (ValueError, IndexError):
+        return (0, 0, 0)
+
+def compare_versions(version1: str, version2: str) -> int:
+    """Compare two version strings. Returns: -1 if v1 < v2, 0 if v1 == v2, 1 if v1 > v2"""
+    v1_tuple = extract_version_number(version1)
+    v2_tuple = extract_version_number(version2)
+    
+    if v1_tuple < v2_tuple:
+        return -1
+    elif v1_tuple > v2_tuple:
+        return 1
+    else:
+        return 0
+
+def get_whats_new_highlights() -> List[str]:
+    """Get 'What's New' highlights for current version."""
+    return WHATS_NEW_HIGHLIGHTS
+
+def read_version_info_file() -> Optional[Dict[str, str]]:
+    """Read version info from the version info file."""
+    try:
+        if not os.path.exists(VERSION_INFO_FILE):
+            return None
+        
+        with open(VERSION_INFO_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if not isinstance(data, dict) or 'version' not in data:
+            return None
+        
+        return data
+    except Exception:
+        return None
+
+def write_version_info_file(version: str):
+    """Write version info to the version info file."""
+    try:
+        data = {"version": version}
+        with open(VERSION_INFO_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass  # Silently fail
+
+def show_whats_new(version: str, highlights: List[str]):
+    """Display 'What's New' information in a professional and colorful format."""
+    if not highlights:
+        return
+    
+    if not RICH_AVAILABLE or not console:
+        # Fallback for non-rich environments
+        print(f"\n{'='*60}")
+        print(f"What's New in VritraAI {version}")
+        print(f"{'='*60}\n")
+        for item in highlights:
+            print(f"  • {item}")
+        print()
+        return
+    
+    from rich.panel import Panel
+    from rich.text import Text
+    
+    # Create header
+    header_text = Text()
+    header_text.append("What's New in ", style="bold bright_white")
+    header_text.append(f"VritraAI {version}", style="bold bright_cyan")
+    
+    console.print("")
+    # Panel with expand=False to only take width of content, not full terminal
+    console.print(Panel(header_text, border_style="bright_cyan", padding=(1, 2), expand=False))
+    console.print("")
+    
+    # Display highlights with professional colors
+    highlight_colors = ["bright_green", "bright_yellow", "bright_blue", "bright_magenta", "bright_cyan"]
+    for idx, item in enumerate(highlights):
+        item_text = Text()
+        # Use different colors for each highlight
+        color = highlight_colors[idx % len(highlight_colors)]
+        item_text.append("  • ", style="bright_cyan")
+        item_text.append(item, style=color)
+        console.print(item_text)
+    
+    console.print("")
+
+def should_show_version_info() -> bool:
+    """Check if we should show version info (only for interactive shell launches)."""
+    args = sys.argv[1:]
+    
+    # Check if help or version flags are used
+    skip_flags = ['-h', '--help', '-v', '--version']
+    for arg in args:
+        if arg in skip_flags:
+            return False
+    
+    # Show for interactive mode (no flags or -i/--interactive)
+    return True
+
+def check_and_show_version_info() -> bool:
+    """Check version info and show 'What's New' if needed. Returns True if should continue."""
+    try:
+        if not should_show_version_info():
+            return True
+        
+        current_version = VRITRA_VERSION.lstrip('vV')  # Remove 'v' prefix for comparison
+        
+        # Read version info file
+        version_info = read_version_info_file()
+        
+        should_show_whats_new = False
+        should_update_file = False
+        show_outdated_warning = False
+        
+        if version_info is None:
+            # File doesn't exist or is invalid - create/update it
+            write_version_info_file(current_version)
+            should_show_whats_new = True
+        else:
+            saved_version = version_info.get('version', '').lstrip('vV')
+            
+            if not saved_version:
+                # Empty or missing version data
+                write_version_info_file(current_version)
+                should_show_whats_new = True
+            else:
+                # Compare versions
+                comparison = compare_versions(current_version, saved_version)
+                
+                if comparison > 0:
+                    # Current version is newer - update and show what's new
+                    write_version_info_file(current_version)
+                    should_show_whats_new = True
+                elif comparison < 0:
+                    # Saved version is newer - show outdated warning
+                    show_outdated_warning = True
+                # If equal, do nothing
+        
+        # Show outdated warning if needed
+        if show_outdated_warning:
+            if RICH_AVAILABLE and console:
+                from rich.panel import Panel
+                from rich.text import Text
+                
+                warning_text = Text()
+                warning_text.append("⚠️  ", style="bold bright_yellow")
+                warning_text.append("Outdated Version Detected", style="bold bright_yellow")
+                warning_text.append("\n\n", style="white")
+                warning_text.append("You're using an outdated version of VritraAI.", style="white")
+                warning_text.append("\n", style="white")
+                warning_text.append("Please upgrade to the latest version:", style="white")
+                warning_text.append("\n\n", style="white")
+                warning_text.append("  pip install vritraai --upgrade", style="bold bright_green")
+                
+                console.print("")
+                console.print(Panel(warning_text, border_style="bright_yellow", padding=(1, 2)))
+                console.print("")
+            else:
+                print("\n⚠️  WARNING: You're using an outdated version of VritraAI.")
+                print("Please upgrade: pip install vritraai --upgrade\n")
+        
+        # Show what's new if needed
+        if should_show_whats_new:
+            highlights = get_whats_new_highlights()
+            
+            # Only show if there's content
+            if highlights:
+                show_whats_new(VRITRA_VERSION, highlights)
+                
+                # Get user confirmation with colorful prompt
+                if RICH_AVAILABLE and console:
+                    from rich.text import Text
+                    console.print("")
+                    prompt_text = Text()
+                    prompt_text.append("Press ", style="dim white")
+                    prompt_text.append("Enter", style="bold bright_green")
+                    prompt_text.append(" to continue or ", style="dim white")
+                    prompt_text.append("'q'", style="bold bright_red")
+                    prompt_text.append(" to quit: ", style="dim white")
+                    console.print(prompt_text, end="")
+                    try:
+                        response = input().strip().lower()
+                        if response == 'q':
+                            return False
+                    except (EOFError, KeyboardInterrupt):
+                        return False
+                else:
+                    try:
+                        response = input("\nPress Enter to continue or 'q' to quit: ").strip().lower()
+                        if response == 'q':
+                            return False
+                    except (EOFError, KeyboardInterrupt):
+                        return False
+        
+        return True
+        
+    except Exception as e:
+        # Silently handle errors - just continue
+        return True
+
 def startup_sequence():
     """Run a simple, clean startup sequence with professional MOTD"""
     # Clear screen for clean start
@@ -13614,6 +14058,11 @@ def main():
     parse_flags()
     
     global shell_running
+    
+    # Check and show version info / What's New (only for interactive shell)
+    if not check_and_show_version_info():
+        # User chose to quit
+        return
     
     # Setup signal handlers for proper Ctrl+C handling
     setup_signal_handlers()
@@ -13652,6 +14101,11 @@ def main():
                 complete_while_typing=True,
                 multiline=False,
             )
+            
+            # Record command to history file with timestamp (before execution)
+            if command and command.strip():
+                record_command_to_history(command.strip())
+            
             execute_command(command)
         except EOFError:
             # EOFError can be from Ctrl+D or exit command
@@ -13763,15 +14217,20 @@ def parse_flags():
     # Filter out empty arguments
     args = [arg for arg in args if arg.strip()]
     
-    # Check for invalid flags
+    # Check for invalid flags and invalid arguments
     invalid_flags = []
+    invalid_arguments = []
     valid_flag_actions = []
     
     for arg in args:
         if arg in valid_flags:
             valid_flag_actions.append(valid_flags[arg])
         elif arg.startswith('-'):
+            # Invalid flag (starts with - but not in valid_flags)
             invalid_flags.append(arg)
+        else:
+            # Invalid argument (doesn't start with -)
+            invalid_arguments.append(arg)
     
     # Handle invalid flags
     if invalid_flags:
@@ -13784,6 +14243,24 @@ def parse_flags():
             print_with_rich("\n💡 Use only one flag at a time.", "warning")
         else:
             print(f"Error: Invalid flag(s): {', '.join(invalid_flags)}")
+            print("Valid flags: -h/--help, -v/--version, -i/--interactive")
+        sys.exit(1)
+    
+    # Handle invalid arguments (non-flag arguments)
+    if invalid_arguments:
+        if RICH_AVAILABLE and console:
+            print_with_rich(f"❌ Invalid argument(s): {', '.join(invalid_arguments)}", "error")
+            print_with_rich("\n💡 VritraAI doesn't accept non-flag arguments.", "warning")
+            print_with_rich("\n💡 Valid usage:", "info")
+            print_with_rich("  vritraai              # Launch interactive shell", "green")
+            print_with_rich("  vritraai -h           # Show help", "green")
+            print_with_rich("  vritraai -v           # Show version", "green")
+            print_with_rich("  vritraai -i           # Launch interactive shell", "green")
+            print_with_rich("\n💡 To run commands, launch the interactive shell first.", "info")
+        else:
+            print(f"Error: Invalid argument(s): {', '.join(invalid_arguments)}")
+            print("VritraAI doesn't accept non-flag arguments.")
+            print("Valid usage: vritraai [flag]")
             print("Valid flags: -h/--help, -v/--version, -i/--interactive")
         sys.exit(1)
     

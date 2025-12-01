@@ -20,7 +20,7 @@ with open("requirements.txt", "r", encoding="utf-8") as f:
 
 setup(
     name="vritraai",
-    version="0.29.1",
+    version="0.29.5",
     author="Alex Butler",
     author_email="contact@vritrasec.com",
     description="An intelligent, AI-enhanced terminal shell with advanced features, beautiful theming, and powerful command execution capabilities",

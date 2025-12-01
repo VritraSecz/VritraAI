@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
     "feedback_worker_url": "https://feedback-n-review.vritrasec.workers.dev/",
     
     # Persistence metadata
-    "_config_version": "2.0",
+    "_config_version": None,  # Will be synced with VRITRA_VERSION on first load/save
     "_last_updated": None
 }
 
@@ -144,6 +144,17 @@ def load_config():
                         merged_config.update(config)
                         merged_config["_last_updated"] = time.time()
                         
+                        # Sync _config_version if None or missing
+                        if not merged_config.get("_config_version"):
+                            try:
+                                import sys
+                                if 'vritraai' in sys.modules:
+                                    vritraai_module = sys.modules['vritraai']
+                                    if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                                        merged_config["_config_version"] = vritraai_module.VRITRA_VERSION
+                            except Exception:
+                                pass
+                        
                         # Save merged config back (adds any new default keys)
                         _save_config_unsafe(merged_config)
                         
@@ -185,7 +196,17 @@ def load_config():
         
         # Fallback to defaults if all attempts failed
         print("⚠️ Using default configuration (file operations failed)")
-        return DEFAULT_CONFIG.copy()
+        fallback_config = DEFAULT_CONFIG.copy()
+        # Try to sync version even in fallback
+        try:
+            import sys
+            if 'vritraai' in sys.modules:
+                vritraai_module = sys.modules['vritraai']
+                if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                    fallback_config["_config_version"] = vritraai_module.VRITRA_VERSION
+        except Exception:
+            pass  # Silently fail if version sync not possible
+        return fallback_config
 
 def _save_config_unsafe(config):
     """Save configuration without acquiring lock (internal use only)."""
@@ -201,6 +222,16 @@ def _save_config_unsafe(config):
         
         # Create backup before saving
         create_config_backup()
+        
+        # Sync _config_version from vritraai if available (avoid circular import)
+        try:
+            import sys
+            if 'vritraai' in sys.modules:
+                vritraai_module = sys.modules['vritraai']
+                if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                    config["_config_version"] = vritraai_module.VRITRA_VERSION
+        except Exception:
+            pass  # Silently fail if version sync not possible
         
         # Update timestamp
         config["_last_updated"] = time.time()
@@ -257,6 +288,15 @@ def reset_config():
         create_config_backup()
         default_config = DEFAULT_CONFIG.copy()
         default_config["_last_updated"] = time.time()
+        # Sync _config_version with VRITRA_VERSION when resetting
+        try:
+            import sys
+            if 'vritraai' in sys.modules:
+                vritraai_module = sys.modules['vritraai']
+                if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                    default_config["_config_version"] = vritraai_module.VRITRA_VERSION
+        except Exception:
+            pass  # Silently fail if version sync not possible
         if save_config(default_config):
             print("🔄 Configuration reset to defaults")
             return True

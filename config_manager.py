@@ -66,7 +66,7 @@ class ConfigurationManager:
             "feedback_worker_url": "https://feedback-n-review.vritrasec.workers.dev/",
             
             # Metadata
-            "_config_version": "2.1",
+            "_config_version": None,  # Will be synced with VRITRA_VERSION on first load/save
             "_created_timestamp": None,
             "_last_updated": None,
             "_update_count": 0
@@ -217,6 +217,15 @@ class ConfigurationManager:
                 initial_config = self.defaults.copy()
                 initial_config["_created_timestamp"] = time.time()
                 initial_config["_last_updated"] = time.time()
+                # Sync _config_version with VRITRA_VERSION on first initialization
+                try:
+                    import sys
+                    if 'vritraai' in sys.modules:
+                        vritraai_module = sys.modules['vritraai']
+                        if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                            initial_config["_config_version"] = vritraai_module.VRITRA_VERSION
+                except Exception:
+                    pass  # Silently fail if version sync not possible
                 self._save_config_unsafe(initial_config)
                 print(f"🔧 Initialized VritraAI configuration at {self.config_file}")
     
@@ -245,6 +254,17 @@ class ConfigurationManager:
                 merged_config = self.defaults.copy()
                 merged_config.update(config)
                 
+                # Sync _config_version if None or missing
+                if not merged_config.get("_config_version"):
+                    try:
+                        import sys
+                        if 'vritraai' in sys.modules:
+                            vritraai_module = sys.modules['vritraai']
+                            if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                                merged_config["_config_version"] = vritraai_module.VRITRA_VERSION
+                    except Exception:
+                        pass
+                
                 # Update cache
                 self._config_cache = merged_config
                 self._cache_timestamp = time.time()
@@ -269,6 +289,15 @@ class ConfigurationManager:
                     fresh_config = self.defaults.copy()
                     fresh_config["_created_timestamp"] = time.time()
                     fresh_config["_last_updated"] = time.time()
+                    # Sync _config_version with VRITRA_VERSION when recreating
+                    try:
+                        import sys
+                        if 'vritraai' in sys.modules:
+                            vritraai_module = sys.modules['vritraai']
+                            if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                                fresh_config["_config_version"] = vritraai_module.VRITRA_VERSION
+                    except Exception:
+                        pass  # Silently fail if version sync not possible
                     return fresh_config
             
             except Exception as e:
@@ -289,6 +318,16 @@ class ConfigurationManager:
             
             # Create backup
             self._create_backup()
+            
+            # Sync _config_version from vritraai if available (avoid circular import)
+            try:
+                import sys
+                if 'vritraai' in sys.modules:
+                    vritraai_module = sys.modules['vritraai']
+                    if hasattr(vritraai_module, 'VRITRA_VERSION'):
+                        config["_config_version"] = vritraai_module.VRITRA_VERSION
+            except Exception:
+                pass  # Silently fail if version sync not possible
             
             # Update metadata
             config["_last_updated"] = time.time()

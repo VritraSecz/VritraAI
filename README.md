@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![Version](https://img.shields.io/badge/version-v0.29.1-blue.svg)
+![Version](https://img.shields.io/badge/version-v0.29.5-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.7+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Termux-lightgrey.svg)
@@ -1092,7 +1092,7 @@ Owner, **Vritra Security Organization**
 
 - **Original Project**: Built from scratch by Alex Butler
 - **Organization**: Vritra Security Organization
-- **Version**: v0.29.1
+- **Version**: v0.29.5
 - **Status**: Active Development
 
 ### Acknowledgments
