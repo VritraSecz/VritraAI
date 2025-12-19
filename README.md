@@ -6,6 +6,7 @@
 ![Python](https://img.shields.io/badge/python-3.7+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Termux-lightgrey.svg)
+[![PyPI Downloads](https://pepy.tech/badge/vritraai)](https://pepy.tech/project/vritraai)
 
 **An intelligent, AI-enhanced terminal shell with advanced features, beautiful theming, and powerful command execution capabilities.**
 
