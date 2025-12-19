@@ -2,7 +2,7 @@
 
 All notable changes to VritraAI will be documented in this file.
 
-## [0.30.0] - 2024-12-18
+## [0.30.0] - 2025-12-18
 
 ### Added
 - **Sudo command support** - Full sudo command execution with color preservation
