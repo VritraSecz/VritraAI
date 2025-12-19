@@ -578,6 +578,9 @@ VritraAI uses a unified configuration system with automatic persistence.
 - **History File**: `~/.config-vritrasecz/vritraai/history`
 - **Session Log**: `~/.config-vritrasecz/vritraai/session.log`
 - **Last Command Log**: `~/.config-vritrasecz/vritraai/lastcmd.log`
+- **Learning Notes**: `~/.config-vritrasecz/vritraai/learning.md`
+- **Version Info**: `~/.config-vritrasecz/vritraai/vritraai-version.json`
+- **Config Backup**: `~/.config-vritrasecz/vritraai/config.json.backup` (automatic backup)
 
 ### Viewing Configuration
 
@@ -950,16 +953,18 @@ VritraAI/
 ├── MANIFEST.in          # Package manifest for PyPI
 ├── README.md            # This file
 ├── LICENSE              # MIT License file
-└── PUBLISH.md           # PyPI publishing guide
+└── CHANGELOG.md         # Version history and changelog
 
 User Configuration Directory:
 ~/.config-vritrasecz/vritraai/
-├── config.json      # Configuration file
-├── history          # Command history
-├── session.log      # Session log
-├── lastcmd.log      # Last command log
-├── scripts/         # User scripts
-└── plugins/         # User plugins
+├── config.json              # Configuration file
+├── config.json.backup       # Automatic config backup
+├── .config.lock             # Configuration lock file (internal)
+├── history                  # Command history
+├── session.log              # Session log
+├── lastcmd.log              # Last command log
+├── learning.md              # Learning notes (from `learn` command)
+└── vritraai-version.json    # Version information file
 ```
 
 ### Key Files
@@ -972,7 +977,7 @@ User Configuration Directory:
 - **`pyproject.toml`**: Modern Python project configuration (PEP 518)
 - **`MANIFEST.in`**: Package manifest for including files in PyPI distribution
 - **`LICENSE`**: MIT License file
-- **`PUBLISH.md`**: Guide for publishing to PyPI
+- **`CHANGELOG.md`**: Version history and changelog documenting all notable changes
 
 ---
 

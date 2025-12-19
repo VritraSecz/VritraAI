@@ -73,5 +73,5 @@ vritraai = "vritraai:main"
 py-modules = ["vritraai", "config_manager", "config"]
 
 [tool.setuptools.package-data]
-"*" = ["README.md", "LICENSE", "requirements.txt"]
+"*" = ["README.md", "LICENSE", "CHANGELOG.md", "requirements.txt"]
 
