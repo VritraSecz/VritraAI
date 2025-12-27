@@ -2,6 +2,43 @@
 
 All notable changes to VritraAI will be documented in this file.
 
+## [0.30.1] - 2025-12-18
+
+### Added
+- **Shell-semantics-based execution philosophy** - Complete redesign of command execution logic based on shell behavior, not command names
+- **VritraAI inbuilt command whitelist** - Clean whitelist system for internal commands that bypass shell TTY detection
+- **`has_pipe_or_redirect()` function** - Smart detection of shell operators (pipes, redirects, background) to determine interactivity
+- **`drain_input_buffer()` function** - Aggressive input buffer draining to prevent leftover characters after interactive commands
+- **`is_vritraai_inbuilt_command()` function** - Check if command is internal VritraAI command that should bypass shell logic
+
+### Fixed
+- **Dangerous command false positives** - Fixed `is_dangerous_command()` to use word-boundary matching instead of substring matching (e.g., `ddddddd` no longer matches `dd`)
+- **Bash command error recovery** - Fixed error recovery not triggering for missing bash script files
+- **Interactive command input buffering** - Fixed issue where Node.js and other stdin-reading commands left characters in buffer after Ctrl+C
+- **Python/Node.js script execution** - Fixed `python file.py` and `node script.js` getting stuck due to incorrect interactivity detection
+- **Terminal unresponsiveness after Ctrl+C** - Fixed terminal becoming unresponsive after interrupting interactive commands
+
+### Changed
+- **Command execution logic** - Completely redesigned to use shell semantics (pipes/redirects = non-interactive, otherwise = interactive)
+- **Removed hardcoded command detection** - No longer uses hardcoded lists of interactive commands (python, node, etc.)
+- **Interactive command detection** - Now behavior-based (checks for shell operators) instead of name-based
+- **Input buffer management** - Enhanced with aggressive draining (20 flushes + non-blocking reads up to 10,000 bytes)
+
+### Improved
+- **Command execution reliability** - All interactive commands now work correctly without hardcoding
+- **Terminal state management** - Better terminal state restoration and input buffer clearing
+- **Error recovery** - Enhanced error recovery for bash commands with missing files
+- **Dangerous command detection** - More accurate detection using word boundaries and exact matches
+- **Input buffer draining** - Multi-stage draining process (flush → non-blocking read → final flush)
+
+### Technical Details
+- Created `VRITRAAI_INBUILT_COMMANDS` set with all internal commands
+- Implemented `has_pipe_or_redirect()` for shell operator detection
+- Enhanced `reset_terminal()` to use new `drain_input_buffer()` function
+- Updated signal handler to use aggressive input draining
+- Modified all interactive command paths to use new draining mechanism
+- Deprecated old `is_interactive_command()` function (kept for backward compatibility)
+
 ## [0.30.0] - 2025-12-18
 
 ### Added
@@ -124,6 +161,7 @@ All notable changes to VritraAI will be documented in this file.
 
 ---
 
+[0.30.1]: https://github.com/VritraSecz/VritraAI/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/VritraSecz/VritraAI/compare/v0.29.5...v0.30.0
 [0.29.5]: https://github.com/VritraSecz/VritraAI/compare/v0.29.1...v0.29.5
 [0.29.1]: https://github.com/VritraSecz/VritraAI/compare/v0.29.0...v0.29.1

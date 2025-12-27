@@ -14,6 +14,18 @@ import sys
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+# Terminal state management for proper TTY handling
+try:
+    import termios
+    import tty
+    import fcntl
+    TERMINAL_SUPPORT = True
+except ImportError:
+    TERMINAL_SUPPORT = False
+    termios = None
+    tty = None
+    fcntl = None
+
 try:
     import openai
 except ImportError:
@@ -82,7 +94,7 @@ except ImportError:
 
 # --- Configuration ---
 # Central version info (change here to update everywhere)
-VRITRA_VERSION = "v0.30.0"
+VRITRA_VERSION = "v0.30.1"
 
 def sync_config_version(config_dict: dict) -> dict:
     """Sync the _config_version field in config dictionary with VRITRA_VERSION."""
@@ -110,15 +122,15 @@ except Exception:
 
 # What's New data for current version (hardcoded - only main highlights)
 WHATS_NEW_HIGHLIGHTS = [
-    "Sudo command support - Full sudo execution with color preservation and security warnings",
-    "Enhanced path handling - Support for `..`, `~`, `../folder`, and automatic directory navigation",
-    "Improved file execution - Better handling of Python and bash scripts with interactive support",
-    "Sudo autocompletion - 30+ common sudo commands available via tab completion",
-    "Sudo dangerous command detection - Warns about risky sudo operations (sudo rm -rf, sudo dd, etc.) with confirmation prompts",
-    "Sudo output capture - Sudo commands now properly capture output for explain_last functionality",
-    "Enhanced error recovery - AI-powered suggestions for missing files and paths with fuzzy matching",
-    "Chain command blocking - Blocks dangerous commands (sudo, bash, path commands) in chain operations",
-    "Better error messages - Detailed, actionable error messages with specific suggestions for different scenarios"
+    "Shell-semantics-based execution - Complete redesign: commands are interactive by default unless pipes/redirects are used",
+    "Fixed dangerous command detection - No more false positives (e.g., 'ddddddd' no longer matches 'dd')",
+    "Fixed interactive command issues - Python, Node.js, and other interactive commands now work correctly",
+    "Enhanced input buffer management - Aggressive draining prevents leftover characters after Ctrl+C",
+    "VritraAI inbuilt command whitelist - Internal commands bypass shell logic for better performance",
+    "Fixed bash error recovery - Error recovery now properly triggers for missing bash script files",
+    "Improved terminal responsiveness - Terminal stays responsive after interrupting interactive commands",
+    "Behavior-based interactivity - No more hardcoded command lists; works with any command automatically",
+    "Better terminal state management - Enhanced terminal restoration and input buffer clearing"
 ]
 
 # Professional config directory structure
@@ -1597,6 +1609,94 @@ def initialize_api():
 
 initialize_api()
 
+# --- Terminal State Management ---
+_saved_terminal_state = None
+
+def save_terminal_state():
+    """Save current terminal state for restoration later."""
+    global _saved_terminal_state
+    if TERMINAL_SUPPORT and sys.stdin.isatty():
+        try:
+            _saved_terminal_state = termios.tcgetattr(sys.stdin.fileno())
+        except (termios.error, OSError):
+            _saved_terminal_state = None
+
+def restore_terminal_state():
+    """Restore terminal to saved state or reset to sane defaults."""
+    global _saved_terminal_state
+    if not TERMINAL_SUPPORT or not sys.stdin.isatty():
+        return
+    
+    try:
+        if _saved_terminal_state:
+            # Restore saved state
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _saved_terminal_state)
+        else:
+            # Reset to sane defaults (cooked mode)
+            attrs = termios.tcgetattr(sys.stdin.fileno())
+            # Set to cooked mode (ICANON | ECHO)
+            attrs[3] |= (termios.ICANON | termios.ECHO)
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, attrs)
+    except (termios.error, OSError):
+        # If restoration fails, try to reset to cooked mode
+        try:
+            attrs = termios.tcgetattr(sys.stdin.fileno())
+            attrs[3] |= (termios.ICANON | termios.ECHO)
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, attrs)
+        except (termios.error, OSError):
+            pass  # Silently fail if we can't restore
+
+def reset_terminal():
+    """Force reset terminal to cooked mode (safe state)."""
+    if not TERMINAL_SUPPORT or not sys.stdin.isatty():
+        return
+    
+    try:
+        # Get current attributes
+        attrs = termios.tcgetattr(sys.stdin.fileno())
+        # Enable canonical mode and echo (cooked mode)
+        attrs[3] |= (termios.ICANON | termios.ECHO)
+        # Disable raw mode flags
+        attrs[3] &= ~termios.ECHONL  # Disable echo newline
+        # Set minimum characters and timeout
+        attrs[6][termios.VMIN] = 1
+        attrs[6][termios.VTIME] = 0
+        # Apply changes
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, attrs)
+        
+        # CRITICAL: Multiple aggressive flushes to clear ALL buffered input
+        # This is essential to prevent prompt-toolkit buffered input from being consumed
+        for _ in range(5):
+            try:
+                termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                termios.tcflush(sys.stdout.fileno(), termios.TCOFLUSH)
+            except (termios.error, OSError):
+                pass
+        
+        # Also try to read any remaining buffered input with non-blocking mode
+        try:
+            import select
+            import fcntl
+            if hasattr(select, 'select') and sys.stdin.fileno() >= 0:
+                # Non-blocking read to drain buffer
+                old_flags = fcntl.fcntl(sys.stdin.fileno(), fcntl.F_GETFL)
+                fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
+                try:
+                    # Read all available input (up to 1000 bytes to prevent infinite loop)
+                    for _ in range(1000):
+                        if select.select([sys.stdin], [], [], 0) == ([], [], []):
+                            break
+                        try:
+                            sys.stdin.read(1)
+                        except (IOError, OSError):
+                            break
+                finally:
+                    fcntl.fcntl(sys.stdin.fileno(), fcntl.F_SETFL, old_flags)
+        except (ImportError, OSError, IOError, AttributeError):
+            pass  # Silently fail if we can't flush
+    except (termios.error, OSError):
+        pass  # Silently fail if we can't reset
+
 # --- Utility Functions ---
 def confirm_action(prompt, default_yes=True):
     """Enhanced confirmation prompt with better UX.
@@ -1635,6 +1735,10 @@ def signal_handler(signum, frame):
     global current_process, shell_running
     
     if signum == signal.SIGINT:  # Ctrl+C
+        # CRITICAL: Restore terminal state FIRST before any other operations
+        restore_terminal_state()
+        reset_terminal()
+        
         if current_process and current_process.poll() is None:
             # If there's a running subprocess, terminate it properly
             try:
@@ -1657,18 +1761,51 @@ def signal_handler(signum, frame):
                     current_process.kill()
                 
                 current_process = None  # Clear the process reference
+                
+                # CRITICAL: After interrupting a process that reads from stdin (like Node.js),
+                # we must aggressively flush the input buffer to prevent buffered input from
+                # being consumed by the next command or prompt
+                if TERMINAL_SUPPORT and sys.stdin.isatty():
+                    try:
+                        # Multiple aggressive flushes to clear ALL buffered input
+                        for _ in range(10):
+                            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                            termios.tcflush(sys.stdout.fileno(), termios.TCOFLUSH)
+                    except (termios.error, OSError):
+                        pass
+                
+                # Ensure terminal is restored after process termination
+                restore_terminal_state()
+                reset_terminal()
+                
+                # Additional flush after terminal reset
+                if TERMINAL_SUPPORT and sys.stdin.isatty():
+                    try:
+                        for _ in range(5):
+                            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                    except (termios.error, OSError):
+                        pass
+                
                 print_with_rich("\n⚠️  Process interrupted by user", "warning")
                 # Raise KeyboardInterrupt to properly return to prompt loop
                 raise KeyboardInterrupt
             except KeyboardInterrupt:
+                # Ensure terminal is restored
+                restore_terminal_state()
+                reset_terminal()
                 # Re-raise to be caught by main loop
                 raise
             except Exception as e:
                 print_with_rich(f"\n⚠️  Error terminating process: {e}", "warning")
                 current_process = None
+                # Ensure terminal is restored even on error
+                restore_terminal_state()
+                reset_terminal()
                 raise KeyboardInterrupt
         else:
-            # No running process, raise KeyboardInterrupt to return to prompt
+            # No running process, ensure terminal is restored
+            restore_terminal_state()
+            reset_terminal()
             print_with_rich("\n⚠️  Operation cancelled (Ctrl+C). Type 'exit' to quit VritraAI.", "warning")
             # Raise KeyboardInterrupt to be caught by the main loop
             raise KeyboardInterrupt
@@ -1921,50 +2058,129 @@ def log_last_command(command: str, output: str, exit_code: int):
     except Exception as e:
         pass  # Silent fail for logging
 
-def is_interactive_command(command: str) -> bool:
-    """Check if a command is interactive and can't have its output captured.
+# ============================================================================
+# NEW EXECUTION PHILOSOPHY: Shell Semantics-Based Interactivity Detection
+# ============================================================================
+# 
+# CORE PRINCIPLE: If the user does NOT explicitly use pipes, redirects, or
+# background operators, the command should be treated as INTERACTIVE by default.
+# This mirrors real shell behavior (bash / zsh).
+#
+# OLD APPROACH (REMOVED):
+# - Hardcoded interactive command names (python, node, npm, etc.)
+# - Script execution heuristics
+# - Treating language runners as non-interactive
+#
+# NEW APPROACH:
+# - Behavior-based detection (pipes/redirects = non-interactive)
+# - Default to interactive for commands without shell operators
+# - VritraAI internal commands bypass shell logic entirely
+#
+# ============================================================================
+
+# Whitelist of VritraAI internal commands that bypass shell execution logic
+# These commands are handled internally and never go through shell TTY detection
+VRITRAAI_INBUILT_COMMANDS = {
+    # Core navigation & file operations
+    'cd', 'ls', 'dir', 'pwd', 'clear', 'exit', 'help',
+    # File operations
+    'create_file', 'create_dir', 'mkdir', 'read_file', 'edit_file',
+    'search_file', 'find_files', 'tree',
+    # AI & analysis commands
+    'ai', 'explain', 'explain_last', 'summarize', 'review', 'optimize_code',
+    'refactor', 'security_scan', 'analyze_system', 'optimize',
+    # Project management
+    'project', 'project_type', 'dependencies_check', 'project_health',
+    'missing_files', 'project_optimize',
+    # Configuration & system
+    'config', 'model', 'apikey', 'api_base', 'theme', 'prompt', 'banner',
+    'safe_mode', 'session', 'history', 'feedback',
+    # Search & comparison
+    'search_regex', 'search_semantic', 'compare', 'diff', 'diff_dir',
+    'diff_semantic', 'recent',
+    # Utilities
+    'hash', 'encode', 'decode', 'time', 'calc', 'generate', 'template',
+    'validate', 'format', 'doc',
+    # System info
+    'sys_info', 'disk_usage', 'env', 'path', 'which', 'uptime', 'memory',
+    'processes',
+    # Network & learning
+    'network', 'learn', 'cheat',
+    # Special handlers (cat, grep have special handling but are still built-ins)
+    'cat', 'grep'
+}
+
+def has_pipe_or_redirect(command: str) -> bool:
+    """Detect if a command uses shell operators that indicate non-interactive execution.
     
-    Uses multiple heuristics to detect interactive commands:
-    1. Known interactive command names
-    2. Commands that typically need TTY (checking for common patterns)
-    3. Commands with flags that indicate interactivity
+    Detects:
+    - Pipes: |
+    - Redirections: >  >>  <  <<
+    - Background operator: &
+    
+    Returns True if any of these operators are present, indicating the command
+    should be treated as non-interactive (output should be captured).
     """
-    command_lower = command.lower()
+    if not command:
+        return False
     
-    # Known interactive command names
-    interactive_indicators = [
-        'vim', 'nano', 'vi', 'emacs', 'htop', 'top', 'less', 'more', 
-        'ssh', 'scp', 'rsync', 'man', 'watch', 'ncurses', 'dialog',
-        'whiptail', 'fzf', 'ranger', 'mc', 'tmux', 'screen', 'weechat',
-        'irssi', 'mutt', 'alpine', 'lynx', 'links', 'w3m', 'git commit',
-        'git rebase', 'git merge', 'git add -i', 'python', 'python3',
-        'ipython', 'node', 'nodejs', 'ruby', 'irb', 'perl', 'mysql',
-        'psql', 'sqlite3', 'redis-cli', 'mongo', 'mongosh', 'docker exec -it',
-        'docker run -it', 'kubectl exec -it', 'kubectl run -it'
-    ]
+    # Check for pipes
+    if '|' in command:
+        return True
     
-    # Check for interactive flags
-    interactive_flags = ['-i', '--interactive', '-it', '-ti']
-    has_interactive_flag = any(flag in command_lower for flag in interactive_flags)
+    # Check for redirections (but ignore > and < in command arguments)
+    # Simple heuristic: if >, >>, <, or << appear, it's likely a redirect
+    redirect_operators = ['>>', '<<', '>', '<']
+    for op in redirect_operators:
+        if op in command:
+            return True
     
-    # Check for known interactive patterns
-    has_interactive_pattern = any(indicator in command_lower for indicator in interactive_indicators)
+    # Check for background operator (but not in the middle of a word)
+    # & at the end or followed by whitespace indicates background execution
+    if '&' in command:
+        # Check if & is at the end or followed by whitespace/newline
+        parts = command.split('&')
+        if len(parts) > 1:
+            # If there's content after &, check if it's just whitespace
+            after_ampersand = '&'.join(parts[1:])
+            if not after_ampersand.strip() or after_ampersand.strip().startswith(';'):
+                return True
     
-    # Commands that read from stdin without flags are likely interactive
-    # (but this is a weaker signal, so we use it as a fallback)
-    stdin_readers = ['cat', 'grep', 'sed', 'awk', 'sort', 'uniq']
-    is_stdin_reader = any(reader in command_lower.split()[0] for reader in stdin_readers if command_lower.split())
+    return False
+
+def is_vritraai_inbuilt_command(command: str) -> bool:
+    """Check if a command is a VritraAI internal command that should bypass shell logic.
     
-    # If it has pipes or redirects, it's less likely to be interactive
-    has_pipes = '|' in command or '>' in command or '<' in command or '>>' in command
+    These commands are handled internally and never go through interactive/non-interactive
+    shell execution logic. They execute using the existing internal execution path.
+    """
+    if not command or not command.strip():
+        return False
     
-    # Python/node/ruby with file arguments are not interactive (they're script execution)
-    # Check if command is "python file.py" or similar (has a file argument)
-    script_execution_patterns = ['python ', 'python3 ', 'node ', 'nodejs ', 'ruby ', 'perl ']
-    is_script_execution = any(pattern in command_lower and len(command.split()) > 1 for pattern in script_execution_patterns)
+    # Extract first word (command name)
+    first_word = command.split()[0] if command.split() else ""
+    first_word_lower = first_word.lower()
     
-    # Return True if it matches interactive patterns, doesn't have pipes/redirects, and is not script execution
-    return (has_interactive_flag or has_interactive_pattern) and not has_pipes and not is_script_execution
+    return first_word_lower in VRITRAAI_INBUILT_COMMANDS
+
+# Legacy function kept for backward compatibility (but deprecated)
+# This is now only used in a few places that haven't been migrated yet
+def is_interactive_command(command: str) -> bool:
+    """DEPRECATED: Legacy function for backward compatibility.
+    
+    This function is being phased out in favor of shell-semantics-based detection.
+    New code should use has_pipe_or_redirect() and the new execution logic.
+    
+    For now, this returns the inverse of has_pipe_or_redirect() to maintain
+    compatibility with existing code that hasn't been migrated yet.
+    """
+    # If it has pipes/redirects, it's non-interactive (old logic)
+    if has_pipe_or_redirect(command):
+        return False
+    
+    # Otherwise, treat as potentially interactive (new philosophy)
+    # This is a temporary bridge until all code is migrated
+    return True
 
 def is_ai_command(cmd: str) -> bool:
     """Check if a command is an AI/internal VritraAI command that should not be logged."""
@@ -2140,9 +2356,47 @@ def _execute_and_log_builtin(command: str, command_func):
     log_last_command(command, full_output, 0)
 
 def is_dangerous_command(command: str) -> bool:
-    """Check if command is potentially dangerous."""
+    """Check if command is potentially dangerous.
+    
+    Uses word-boundary matching to avoid false positives (e.g., 'ddddddd' shouldn't
+    match 'dd'). Checks if dangerous commands appear as actual commands or flags,
+    not just as substrings.
+    """
+    if not command or not command.strip():
+        return False
+    
     command_lower = command.lower().strip()
-    return any(dangerous in command_lower for dangerous in DANGEROUS_COMMANDS)
+    command_words = command_lower.split()
+    
+    # Check if any dangerous command is an exact word match or starts the command
+    for dangerous in DANGEROUS_COMMANDS:
+        dangerous_lower = dangerous.lower()
+        
+        # Check if dangerous command is the first word (exact match)
+        if command_words and command_words[0] == dangerous_lower:
+            return True
+        
+        # Check if dangerous command appears as a complete word (not substring)
+        # e.g., 'dd' should match 'dd if=/dev/zero' but not 'ddddddd'
+        if dangerous_lower in command_words:
+            return True
+        
+        # Check if command starts with dangerous command followed by space or equals
+        # e.g., 'dd if=' or 'rm -rf'
+        if command_lower.startswith(dangerous_lower + ' ') or command_lower.startswith(dangerous_lower + '='):
+            return True
+        
+        # Check for dangerous patterns that might be part of flags
+        # e.g., 'rm -rf' should match, but 'ddddddd' should not
+        dangerous_words = dangerous_lower.split()
+        if len(dangerous_words) > 1:
+            # Multi-word dangerous command (e.g., 'rm -rf')
+            # Check if all words appear in sequence
+            for i in range(len(command_words) - len(dangerous_words) + 1):
+                if command_words[i:i+len(dangerous_words)] == dangerous_words:
+                    return True
+    
+    return False
 
 def is_complex_command(command: str) -> bool:
     """Check if command is complex and likely needs AI interpretation."""
@@ -6035,14 +6289,38 @@ def execute_command(command: str):
         script_file = args[0]
         # Check if script file exists
         if not os.path.exists(script_file):
-            print_with_rich(f"⚠️  Error: Script file '{script_file}' not found!", "error")
-            session.add_command(command, error=f"Script file '{script_file}' not found")
+            error_msg = f"Script file '{script_file}' not found"
+            print_with_rich(f"⚠️  Error: {error_msg}!", "error")
+            session.add_command(command, error=error_msg)
+            
+            # Launch error recovery mode if AI is enabled
+            if AI_ENABLED:
+                error = FileNotFoundError(error_msg)
+                should_retry = handle_error_with_recovery(
+                    error, 
+                    context=f"Command: {command}\nTrying to execute bash script: {script_file}", 
+                    show_suggestion=True, 
+                    auto_mode=False
+                )
+                if should_retry:
+                    # Retry the command
+                    execute_command(command)
+                    return
             return
         
         # Execute bash script - always treat as interactive to handle input
         start_time = time.time()
         try:
+            # First, try to capture stderr to check for file not found errors
+            # We'll run it twice: once to capture errors, once for interactive execution
+            # But actually, we can use a single run with stderr capture for error detection
+            # while still allowing interactive input
+            
+            # For bash scripts, we need to check if the file is executable and exists
+            # But we already checked existence above, so now we execute
+            
             # Execute with shell=True and no output capture to allow interactive scripts
+            # But capture stderr separately to detect errors
             result = subprocess.run(command, shell=True, capture_output=False)
             execution_time = time.time() - start_time
             
@@ -6051,14 +6329,61 @@ def execute_command(command: str):
                 print_with_rich(f"⏱️  Completed in {execution_time:.2f}s", "info")
             
             if result.returncode != 0:
+                # Try to capture error message for better error recovery
+                # Run again with capture to get error details
+                error_result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=5)
+                error_text = error_result.stderr if error_result.stderr else error_result.stdout
+                
+                # Check if it's a "not found" type error
+                is_not_found = (
+                    result.returncode == 127 or  # Standard "command not found" exit code
+                    result.returncode == 2 or  # File not found exit code
+                    any(phrase in (error_text.lower() if error_text else "") for phrase in [
+                        "no such file", "not found", "cannot find", "does not exist", 
+                        "cannot access", "no existe", "cannot open", "command not found",
+                        "no such file or directory", "can't open file", "errno 2",
+                        "file not found", "file does not exist", "bad interpreter"
+                    ])
+                )
+                
+                error_msg = error_text.strip() if error_text and error_text.strip() else f"Exited with code {result.returncode}"
                 print_with_rich(f"Command exited with code {result.returncode}", "warning")
-                session.add_command(command, error=f"Exited with code {result.returncode}")
+                session.add_command(command, error=error_msg)
+                
+                # Launch error recovery mode for "not found" errors
+                if AI_ENABLED and is_not_found:
+                    error = FileNotFoundError(error_msg)
+                    should_retry = handle_error_with_recovery(
+                        error, 
+                        context=f"Command: {command}\nBash script execution failed", 
+                        show_suggestion=True, 
+                        auto_mode=False
+                    )
+                    if should_retry:
+                        # Retry the command
+                        execute_command(command)
+                        return
             else:
                 session.add_command(command, "Command completed successfully")
             return
         except Exception as e:
+            error_msg = str(e)
             print_with_rich(f"Error executing bash script: {e}", "error")
-            session.add_command(command, error=str(e))
+            session.add_command(command, error=error_msg)
+            
+            # Launch error recovery mode if AI is enabled
+            if AI_ENABLED:
+                error = Exception(error_msg)
+                should_retry = handle_error_with_recovery(
+                    error, 
+                    context=f"Command: {command}\nBash script execution error", 
+                    show_suggestion=True, 
+                    auto_mode=False
+                )
+                if should_retry:
+                    # Retry the command
+                    execute_command(command)
+                    return
             return
     elif is_command(cmd):
         # Special handling for piped commands with grep
@@ -6076,47 +6401,31 @@ def execute_command(command: str):
             handle_grep_command(command)
             return
         
-        # Execute system commands with smart interactive detection
+        # ====================================================================
+        # NEW EXECUTION PHILOSOPHY: Shell Semantics-Based Interactivity
+        # ====================================================================
+        # 
+        # CORE PRINCIPLE: If the user does NOT explicitly use pipes, redirects,
+        # or background operators, the command should be treated as INTERACTIVE
+        # by default. This mirrors real shell behavior (bash / zsh).
+        #
+        # Execution flow:
+        # 1. Check if has_pipe_or_redirect() → NON-INTERACTIVE (capture output)
+        # 2. Otherwise → INTERACTIVE (direct TTY attachment)
+        #
+        # ====================================================================
+        
         start_time = time.time()
         
-        # Smart approach: Use simple subprocess.run() like testt.py for all commands
-        # This ensures ALL interactive commands work properly without hardcoding
         try:
-            # Check if command is interactive (can't capture output)
-            is_likely_interactive = is_interactive_command(command)
+            # NEW APPROACH: Use shell semantics to determine interactivity
+            # If command has pipes/redirects, it's non-interactive (capture output)
+            # Otherwise, it's interactive (direct TTY attachment)
+            has_shell_operators = has_pipe_or_redirect(command)
             
-            if is_likely_interactive:
-                # For interactive commands, run without capture to allow interaction
-                # Skip logging for interactive commands as we can't capture their output
-                # Use simple subprocess.run() like testt.py - this works for all interactive commands
-                result = subprocess.run(command, shell=True)
-                execution_time = time.time() - start_time
-                
-                # Check for file not found errors even in interactive mode (for Python commands)
-                if result.returncode != 0 and cmd.lower() in ['python', 'python3']:
-                    # Try to capture error for Python file not found errors
-                    temp_result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=5)
-                    if temp_result.stderr and any(phrase in temp_result.stderr.lower() for phrase in [
-                        "can't open file", "no such file", "errno 2", "file not found"
-                    ]):
-                        error_text = temp_result.stderr
-                        actual_error_msg = error_text.strip()
-                        session.add_command(command, error=actual_error_msg)
-                        
-                        # Launch error recovery mode for file not found
-                        if AI_ENABLED:
-                            error = FileNotFoundError(actual_error_msg)
-                            should_retry = handle_error_with_recovery(
-                                error, 
-                                context=f"Command: {command}\nPython file not found error", 
-                                show_suggestion=True, 
-                                auto_mode=False
-                            )
-                            if should_retry:
-                                execute_command(command)
-                                return
-            else:
-                # For non-interactive commands, capture output for logging
+            if has_shell_operators:
+                # NON-INTERACTIVE: Command has pipes/redirects → capture output
+                # NON-INTERACTIVE PATH: Capture output for logging and display
                 result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=None)
                 
                 # Combine stdout and stderr for logging
@@ -6137,6 +6446,67 @@ def execute_command(command: str):
                     print(result.stdout, end='')
                 if result.stderr:
                     print_with_rich(result.stderr, "error")
+            else:
+                # INTERACTIVE PATH: No pipes/redirects → direct TTY attachment
+                # This ensures python file.py, node readline, npm init, etc. work correctly
+                
+                # CRITICAL: Flush input buffer and restore terminal state BEFORE execution
+                # This prevents any buffered input from prompt-toolkit from being consumed
+                if TERMINAL_SUPPORT and sys.stdin.isatty():
+                    try:
+                        # Flush input buffer first
+                        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                        
+                        # Restore terminal to original state (before prompt-toolkit modified it)
+                        if _saved_terminal_state:
+                            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _saved_terminal_state)
+                        else:
+                            # If no saved state, ensure cooked mode
+                            reset_terminal()
+                    except (termios.error, OSError):
+                        reset_terminal()
+                
+                # Use subprocess.Popen for interactive commands to have better control
+                # This allows us to properly handle stdin and flush buffers after termination
+                current_process = subprocess.Popen(
+                    command,
+                    shell=True,
+                    stdin=sys.stdin,
+                    stdout=sys.stdout,
+                    stderr=sys.stderr,
+                    preexec_fn=os.setsid if hasattr(os, 'setsid') and platform.system() != "Windows" else None
+                )
+                
+                try:
+                    exit_code = current_process.wait()
+                    # Create result object for compatibility
+                    result = type('obj', (object,), {'returncode': exit_code})()
+                finally:
+                    current_process = None
+                    
+                    # CRITICAL: After interactive command completes, flush input buffer aggressively
+                    # This prevents any leftover input from stdin-reading commands (like Node.js)
+                    # from being consumed by the next command or prompt
+                    if TERMINAL_SUPPORT and sys.stdin.isatty():
+                        try:
+                            # Multiple aggressive flushes to clear ALL buffered input
+                            for _ in range(10):
+                                termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                                termios.tcflush(sys.stdout.fileno(), termios.TCOFLUSH)
+                            
+                            # Force terminal to cooked mode
+                            reset_terminal()
+                            
+                            # Additional aggressive flush after reset
+                            for _ in range(5):
+                                termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                        except (termios.error, OSError):
+                            reset_terminal()
+                    else:
+                        # Ensure terminal is back in cooked mode after execution
+                        reset_terminal()
+                
+                execution_time = time.time() - start_time
             
             # Handle exit codes
             if result.returncode != 0:
@@ -6206,6 +6576,10 @@ def execute_command(command: str):
                 execute_command(command)
                 return
         except KeyboardInterrupt:
+            # CRITICAL: Restore terminal state immediately after interruption
+            restore_terminal_state()
+            reset_terminal()
+            
             print_with_rich("\nCommand interrupted by user", "info")
             # Log interrupted command if it should be logged
             if should_log_command(command):
@@ -6318,13 +6692,74 @@ def execute_command(command: str):
                     
                     start_time = time.time()
                     try:
+                        # Ensure terminal is in cooked mode for interactive input
+                        # Don't save/restore state during normal execution - only for Ctrl+C recovery
+                        if TERMINAL_SUPPORT and sys.stdin.isatty():
+                            try:
+                                # Ensure terminal is in cooked mode (canonical + echo)
+                                attrs = termios.tcgetattr(sys.stdin.fileno())
+                                attrs[3] |= (termios.ICANON | termios.ECHO)
+                                attrs[6][termios.VMIN] = 1
+                                attrs[6][termios.VTIME] = 0
+                                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, attrs)
+                            except (termios.error, OSError):
+                                pass  # Silently fail if we can't set terminal mode
+                        
                         if file_ext == '.py':
-                            # For Python files, use explicit python command for better interactive support
+                            # For Python files, use os.system() for proper interactive support
+                            # os.system() gives the script direct access to the terminal,
+                            # bypassing any terminal state modifications from prompt-toolkit
                             python_cmd = f"python {command}" if not command.startswith("python") else command
-                            result = subprocess.run(python_cmd, shell=True, capture_output=False)
+                            
+                            # CRITICAL: Flush input buffer and restore terminal state BEFORE execution
+                            # This prevents any buffered input from prompt-toolkit from being consumed
+                            if TERMINAL_SUPPORT and sys.stdin.isatty():
+                                try:
+                                    # Flush input buffer first
+                                    termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                                    
+                                    # Restore terminal to original state (before prompt-toolkit modified it)
+                                    if _saved_terminal_state:
+                                        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _saved_terminal_state)
+                                    else:
+                                        # If no saved state, ensure cooked mode
+                                        reset_terminal()
+                                except (termios.error, OSError):
+                                    reset_terminal()
+                            
+                            # Use os.system() - it's simpler and works better for interactive scripts
+                            exit_code = os.system(python_cmd)
+                            
+                            # Create result object for compatibility
+                            result = type('obj', (object,), {'returncode': exit_code >> 8 if exit_code else 0})()
+                            
+                            # Ensure terminal is back in cooked mode after execution
+                            reset_terminal()
                         else:
-                            # For bash files, execute with shell=True to handle shebangs properly
-                            result = subprocess.run(command, shell=True, capture_output=False)
+                            # For bash files, use os.system() for proper interactive support
+                            # CRITICAL: Flush input buffer and restore terminal state BEFORE execution
+                            if TERMINAL_SUPPORT and sys.stdin.isatty():
+                                try:
+                                    # Flush input buffer first
+                                    termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                                    
+                                    # Restore terminal to original state (before prompt-toolkit modified it)
+                                    if _saved_terminal_state:
+                                        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _saved_terminal_state)
+                                    else:
+                                        # If no saved state, ensure cooked mode
+                                        reset_terminal()
+                                except (termios.error, OSError):
+                                    reset_terminal()
+                            
+                            # Use os.system() - it's simpler and works better for interactive scripts
+                            exit_code = os.system(command)
+                            
+                            # Create result object for compatibility
+                            result = type('obj', (object,), {'returncode': exit_code >> 8 if exit_code else 0})()
+                            
+                            # Ensure terminal is back in cooked mode after execution
+                            reset_terminal()
                         
                         execution_time = time.time() - start_time
                         
@@ -6338,7 +6773,32 @@ def execute_command(command: str):
                         else:
                             session.add_command(command, "Command completed successfully")
                         return
+                    except KeyboardInterrupt:
+                        # Handle Ctrl+C during execution
+                        restore_terminal_state()
+                        reset_terminal()
+                        if current_process:
+                            try:
+                                if platform.system() != "Windows":
+                                    os.killpg(os.getpgid(current_process.pid), signal.SIGINT)
+                                else:
+                                    current_process.terminate()
+                                current_process.wait(timeout=1)
+                            except (subprocess.TimeoutExpired, ProcessLookupError, OSError):
+                                try:
+                                    current_process.kill()
+                                except:
+                                    pass
+                            current_process = None
+                        restore_terminal_state()
+                        reset_terminal()
+                        print_with_rich("\n⚠️  Execution interrupted by user", "warning")
+                        session.add_command(command, error="Interrupted by user")
+                        raise  # Re-raise to be handled by outer try-except
                     except Exception as e:
+                        # Ensure terminal is restored even on error
+                        restore_terminal_state()
+                        reset_terminal()
                         print_with_rich(f"Error executing file: {e}", "error")
                         session.add_command(command, error=str(e))
                         return
@@ -6398,16 +6858,15 @@ def execute_command(command: str):
             ai_command(command)
         elif shutil.which(cmd):
             # Try to execute as system command if it exists in PATH
+            # Use NEW shell-semantics approach
             try:
-                # Check if interactive - if so, run without capture
-                if is_interactive_command(command):
-                    # For interactive commands, skip logging
-                    # Use simple subprocess.run() like testt.py - this works for all interactive commands
-                    current_process = subprocess.Popen(command, shell=True)
-                    current_process.wait()
-                    current_process = None
-                else:
-                    # For non-interactive commands, capture output
+                # NEW APPROACH: Use shell semantics to determine interactivity
+                # If command has pipes/redirects, it's non-interactive (capture output)
+                # Otherwise, it's interactive (direct TTY attachment)
+                has_shell_operators = has_pipe_or_redirect(command)
+                
+                if has_shell_operators:
+                    # NON-INTERACTIVE: Command has pipes/redirects → capture output
                     current_process = subprocess.Popen(
                         command,
                         shell=True,
@@ -6435,33 +6894,105 @@ def execute_command(command: str):
                     if stderr:
                         print_with_rich(stderr, "error")
                     
-                    # Handle exit codes and check for "not found" errors
-                    if exit_code != 0:
-                        # Check if it's a "not found" type error
-                        # Exit code 127 typically means "command not found"
-                        error_text = stderr if stderr else stdout
-                        is_not_found = (
-                            exit_code == 127 or  # Standard "command not found" exit code
-                            any(phrase in error_text.lower() for phrase in [
-                                "no such file", "not found", "cannot find", "does not exist", 
-                                "cannot access", "no existe", "cannot open", "command not found",
-                                "no such file or directory"
-                            ])
-                        )
+                    # Create result object for compatibility
+                    result = type('obj', (object,), {'returncode': exit_code})()
+                else:
+                    # INTERACTIVE: No pipes/redirects → direct TTY attachment
+                    # This ensures python file.py, node readline, npm init, etc. work correctly
+                    
+                    # CRITICAL: Flush input buffer and restore terminal state BEFORE execution
+                    # This prevents any buffered input from prompt-toolkit from being consumed
+                    if TERMINAL_SUPPORT and sys.stdin.isatty():
+                        try:
+                            # Flush input buffer first
+                            termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                            
+                            # Restore terminal to original state (before prompt-toolkit modified it)
+                            if _saved_terminal_state:
+                                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, _saved_terminal_state)
+                            else:
+                                # If no saved state, ensure cooked mode
+                                reset_terminal()
+                        except (termios.error, OSError):
+                            reset_terminal()
+                    
+                    # Use subprocess.Popen for interactive commands to have better control
+                    # This allows us to properly handle stdin and flush buffers after termination
+                    current_process = subprocess.Popen(
+                        command,
+                        shell=True,
+                        stdin=sys.stdin,
+                        stdout=sys.stdout,
+                        stderr=sys.stderr,
+                        preexec_fn=os.setsid if hasattr(os, 'setsid') and platform.system() != "Windows" else None
+                    )
+                    
+                    try:
+                        exit_code = current_process.wait()
+                        # Create result object for compatibility
+                        result = type('obj', (object,), {'returncode': exit_code})()
+                    finally:
+                        current_process = None
                         
-                        # Use the actual error text for logging and recovery
-                        actual_error_msg = error_text if error_text else f"Command exited with code {exit_code}"
-                        session.add_command(command, error=actual_error_msg)
-                        
-                        # AI-powered error explanation for "not found" errors
-                        if AI_ENABLED and is_not_found:
-                            error = FileNotFoundError(actual_error_msg)
-                            # Use interactive error recovery with menu options
-                            should_retry = handle_error_with_recovery(error, context=f"Command: {command}", show_suggestion=True, auto_mode=False)
-                            if should_retry:
-                                # Re-run the command once
-                                execute_command(command)
-                                return
+                        # CRITICAL: After interactive command completes, flush input buffer aggressively
+                        # This prevents any leftover input from stdin-reading commands (like Node.js)
+                        # from being consumed by the next command or prompt
+                        if TERMINAL_SUPPORT and sys.stdin.isatty():
+                            try:
+                                # Multiple aggressive flushes to clear ALL buffered input
+                                for _ in range(10):
+                                    termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                                    termios.tcflush(sys.stdout.fileno(), termios.TCOFLUSH)
+                                
+                                # Force terminal to cooked mode
+                                reset_terminal()
+                                
+                                # Additional aggressive flush after reset
+                                for _ in range(5):
+                                    termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                            except (termios.error, OSError):
+                                reset_terminal()
+                        else:
+                            # Ensure terminal is back in cooked mode after execution
+                            reset_terminal()
+                
+                # Handle exit codes and check for "not found" errors
+                if result.returncode != 0:
+                    # Check if it's a "not found" type error
+                    # Exit code 127 typically means "command not found"
+                    error_text = ""
+                    if hasattr(result, 'stderr') and result.stderr:
+                        error_text = result.stderr
+                    elif hasattr(result, 'stdout') and result.stdout:
+                        error_text = result.stdout
+                    elif has_shell_operators:
+                        # For non-interactive commands, we have stderr/stdout from communicate()
+                        error_text = stderr if 'stderr' in locals() and stderr else (stdout if 'stdout' in locals() and stdout else "")
+                    
+                    is_not_found = (
+                        result.returncode == 127 or  # Standard "command not found" exit code
+                        any(phrase in error_text.lower() for phrase in [
+                            "no such file", "not found", "cannot find", "does not exist", 
+                            "cannot access", "no existe", "cannot open", "command not found",
+                            "no such file or directory"
+                        ])
+                    )
+                    
+                    # Use the actual error text for logging and recovery
+                    actual_error_msg = error_text if error_text else f"Command exited with code {result.returncode}"
+                    session.add_command(command, error=actual_error_msg)
+                    
+                    # AI-powered error explanation for "not found" errors
+                    if AI_ENABLED and is_not_found:
+                        error = FileNotFoundError(actual_error_msg)
+                        # Use interactive error recovery with menu options
+                        should_retry = handle_error_with_recovery(error, context=f"Command: {command}", show_suggestion=True, auto_mode=False)
+                        if should_retry:
+                            # Re-run the command once
+                            execute_command(command)
+                            return
+                else:
+                    session.add_command(command, "Command completed successfully")
                     
             except Exception as e:
                 error_msg = str(e)
@@ -14589,7 +15120,7 @@ def show_motd():
 
 # --- Version Info and What's New ---
 def extract_version_number(version_str: str) -> tuple:
-    """Extract version number from version string (e.g., 'v0.30.0' -> (0, 30, 0))"""
+    
     try:
         # Remove 'v' prefix if present
         version_str = version_str.lstrip('vV')
@@ -14798,6 +15329,9 @@ def check_and_show_version_info() -> bool:
 
 def startup_sequence():
     """Run a simple, clean startup sequence with professional MOTD"""
+    # Save initial terminal state for restoration later
+    save_terminal_state()
+    
     # Clear screen for clean start
     clear_screen()
     
@@ -14865,7 +15399,28 @@ def main():
             if command and command.strip():
                 record_command_to_history(command.strip())
             
+            # CRITICAL: Flush any pending input from prompt-toolkit before executing command
+            # This prevents buffered input from being consumed by subprocesses
+            if TERMINAL_SUPPORT and sys.stdin.isatty():
+                try:
+                    # Multiple flushes to ensure clean state
+                    for _ in range(3):
+                        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                except (termios.error, OSError):
+                    pass
+            
             execute_command(command)
+            
+            # CRITICAL: After command execution, flush input buffer aggressively
+            # This prevents any leftover input from interactive commands (like Node.js stdin readers)
+            # from being consumed by the next command or prompt
+            if TERMINAL_SUPPORT and sys.stdin.isatty():
+                try:
+                    # Aggressive flush after command completes (especially important for stdin-reading commands)
+                    for _ in range(5):
+                        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                except (termios.error, OSError):
+                    pass
         except EOFError:
             # EOFError can be from Ctrl+D or exit command
             print("\n")
@@ -14885,7 +15440,23 @@ def main():
                 show_session_summary("Session ended")
             break
         except KeyboardInterrupt:
-            # Ctrl+C pressed - handled by signal handler, just continue
+            # Ctrl+C pressed - ensure terminal is restored
+            restore_terminal_state()
+            reset_terminal()
+            
+            # CRITICAL: Aggressively flush input buffer after Ctrl+C
+            # This prevents any buffered input from stdin-reading commands (like Node.js)
+            # from being consumed by the next command or prompt
+            if TERMINAL_SUPPORT and sys.stdin.isatty():
+                try:
+                    # Multiple aggressive flushes to clear ALL buffered input
+                    for _ in range(10):
+                        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                        termios.tcflush(sys.stdout.fileno(), termios.TCOFLUSH)
+                except (termios.error, OSError):
+                    pass
+            
+            # Continue to next prompt
             continue
         except Exception as e:
             print_with_rich(f"An unexpected error occurred: {e}", "error")
